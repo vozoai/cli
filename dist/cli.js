@@ -31,7 +31,7 @@ var import_node_stream = require("stream");
 var import_promises2 = require("stream/promises");
 
 // src/core/config.ts
-var CLI_VERSION = "0.0.4";
+var CLI_VERSION = "1.0.0";
 function formatCliVersionForApiHeader(version) {
   const withoutPrefix = version.trim().replace(/^v/i, "");
   const coreMatch = withoutPrefix.match(/^(\d+\.\d+\.\d+)/);

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/core/config.ts
-var CLI_VERSION = "0.0.4";
+var CLI_VERSION = "1.0.0";
 function formatCliVersionForApiHeader(version) {
   const withoutPrefix = version.trim().replace(/^v/i, "");
   const coreMatch = withoutPrefix.match(/^(\d+\.\d+\.\d+)/);
@@ -9890,4 +9890,4 @@ export {
   installBundledSkills,
   buildCli
 };
-//# sourceMappingURL=chunk-M3RNAKXV.mjs.map
+//# sourceMappingURL=chunk-UMNF6U3Y.mjs.map
