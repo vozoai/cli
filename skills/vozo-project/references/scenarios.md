@@ -27,7 +27,7 @@ vozo-cli project translate_dub create \
 ```
 
 - Returns `ids[]` for batch. Poll each `get`. Download per id. Share each `webUrl`.
-- Requires Studio+ for batch `--from-dir` / `--from-files` (backend batch API).
+- Requires Studio+ for batch `--from-dir` / `--from-files`.
 
 ## B. YouTube URL → Chinese
 
@@ -78,7 +78,7 @@ Example: folder → English dub + on-screen text + lip sync:
 
 1. `translate_dub create --from-dir ... --target-language en` → wait all `ids`
 2. `visual_translate create --from-dir ... --target-language en --original-language <src>` → wait (same files, separate projects)
-3. For each dub id: `lipsync create --from-translation <dub-id>` → wait → download `lipsync_video`
+3. For each dub id: `lipsync create --from-translation <dub-id> --face-mode single|more` → wait → download `lipsync_video`
 
 Rules:
 
@@ -116,7 +116,7 @@ Each call creates a full batch for that language. Track `ids` per language. Poin
 ## F. Folder → dub zh/ja/fr + lip sync each
 
 1. Three batch creates: `--target-language zh`, `ja`, `fr` on same `--from-dir`.
-2. After each language's dub projects complete, `lipsync create --from-translation <dub-id>` per project (or per user scope).
+2. After each language's dub projects complete, `lipsync create --from-translation <dub-id> --face-mode single|more` per project (or per user scope).
 3. Download `lipsync_video` (+ optional dub artifacts).
 
 ## G. Bulk download with filters (agent orchestrates)
@@ -128,6 +128,7 @@ CLI has no single "batch download" command. Pattern:
    - Kind: `project list --kind translate_subtitles`
    - Title: `project search "AAAA"`
    - All: `project list --kind all` + paginate `--cursor`
+   - **Do not equate `totalCount` with listable rows.** The server total can include types this CLI omits (talking photo, voice studio, …). When that happens, the page includes `skippedUnsupportedCount` and a `notice`. Trust `items[]` + `nextCursor` for pagination; ignore the gap vs `totalCount`.
 2. **Filter in agent** on `items[]`:
    - Last 7 days: `createdAt` within 7 days
    - Target English: `targetLanguage` matches `en` / English variants

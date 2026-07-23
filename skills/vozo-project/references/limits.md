@@ -9,7 +9,9 @@ Fails **before** upload/API if violated:
 - Tier upload caps (dub/subtitles only): free or Pro 20min; Creator 60min; Studio+ 120min per file.
   - **First Translate & Dub create green channel:** if the account has never completed a successful translation (`existSuccessfulTranslation === false`), the **tier** upload cap is skipped for `translate_dub` only (hard caps still apply). This matches the web upload validator. After the first successful dub, free/Pro users are again limited to 20 minutes per upload. `translate_subtitles` always applies the tier cap (no green channel).
 - File size: 2.5 GB (dub/subtitles/lipsync), 2 GB (visual).
-- Studio+ for batch `--from-dir` / `--from-files` on `translate_dub` and `translate_subtitles` (uses batch APIs — never substitute N× `--from-file`); Studio+ for glossary, proofread, custom font; Creator+ for `--prompt`.
+- Studio+ for batch `--from-dir` / `--from-files` (never substitute N× `--from-file`); Studio+ for glossary, proofread, custom font; Creator+ for `--prompt`.
+- Batch create (`--from-files` / `--from-dir`): at most **40 files** per command (same as the web uploader). Split larger sets into multiple batches.
+- Project title / upload filename: max **100 characters** (auto from source filename or page title; truncated to match the web create flow).
 
 **Estimated points per project** (CLI pre-check; 0 = free):
 

@@ -187,7 +187,7 @@ Product tools use `project <kind> …`, where `<kind>` is one of:
 | Translate & Dub     | `translate_dub`       | `--from-file` / `--from-files` / `--from-dir` / `--from-url` (video or audio) |
 | Translate Subtitles | `translate_subtitles` | Same as above (video only)                                             |
 | Visual Translate    | `visual_translate`    | Same as above (video only; original language required)                 |
-| Lip Sync            | `lipsync`             | `--from-file` / `--from-url`                                           |
+| Lip Sync            | `lipsync`             | `--from-file` / `--from-files` / `--from-dir` / `--from-url` / `--from-translation` |
 
 Each kind supports:
 

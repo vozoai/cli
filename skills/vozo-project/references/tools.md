@@ -34,12 +34,7 @@ Resolve a folder id with `folder search` when the user names a folder; use `fold
 
 **Create source (one of):** `--from-url` | `--from-file` | `--from-files` | `--from-dir`
 
-**Batch (2+ files or a folder) — mandatory for agents:**
-
-- Use **`--from-files`** or **`--from-dir`** in a **single** `create` command.
-- **Never** loop `create --from-file` once per file; that hits the single-file API and is slower, costlier, and wrong for folder workflows.
-- Backend: `POST /v1/translations/batch_translate` → response `ids[]`.
-- Requires **Studio+**. Not compatible with `--title`, `--subtitle-file`, or `--speaker-number` (single-file only).
+**Batch (2+ files or a folder):** use **one** `--from-files` / `--from-dir` create (never loop `--from-file`). Requires **Studio+**. Not compatible with `--subtitle-file` or `--speaker-number`.
 
 **Single file / URL:** `--from-url` or `--from-file` only.
 
@@ -60,7 +55,7 @@ Video: `.avi`, `.webm`, `.wmv`, `.mp4`, `.mov`. Audio: `.mp3`, `.wav`, `.m4a` �
 | Proofread before dub | `--proofread-before-dubbing` (Studio+)                                                                                                                                                                                                                              |
 | Prompt               | `--prompt` (Creator+)                                                                                                                                                                                                                                               |
 | Glossary             | `--glossary <ids...>` (Studio+)                                                                                                                                                                                                                                     |
-| Title / folder       | `--title`, `--folder`                                                                                                                                                                                                                                               |
+| Folder               | `--folder`                                                                                                                                                                                                                                                          |
 
 **Download artifacts (download as many as the user wants):**
 
@@ -83,12 +78,7 @@ Subtitles are generated locally (no export). Video/audio often need `export` fir
 
 **Source:** same as dub but **video only**.
 
-**Batch (2+ videos or a folder) — mandatory for agents:**
-
-- Use **`--from-files`** or **`--from-dir`** in a **single** `create` command.
-- **Never** loop `create --from-file` per video.
-- Backend: `POST /v1/translate_captions/batch` → response `ids[]`.
-- Requires **Studio+**. Not compatible with `--title` or `--subtitle-file` (single-file only).
+**Batch (2+ videos or a folder):** use **one** `--from-files` / `--from-dir` create (never loop `--from-file`). Requires **Studio+**. Not compatible with `--subtitle-file`.
 
 **Single file / URL:** `--from-url` or `--from-file` only.
 
@@ -99,7 +89,7 @@ Subtitles are generated locally (no export). Video/audio often need `export` fir
 | Subtitle display     | `--subtitle-display translated_only\|original_translated` |
 | Remove original subs | `--remove-original-subtitle`                              |
 | Prompt / glossary    | `--prompt` (Creator+), `--glossary` (Studio+)             |
-| Title / folder       | `--title`, `--folder`                                     |
+| Folder               | `--folder`                                                |
 
 **Download:**
 
@@ -110,9 +100,7 @@ Subtitles are generated locally (no export). Video/audio often need `export` fir
 
 ## Visual translate (`visual_translate`)
 
-**Source:** video only. **Required:** `--target-language`, and `--original-language` — **this tool has no `auto` original language; the user must state it explicitly.**
-
-**Batch (2+ videos or a folder):** `--from-files` / `--from-dir` are accepted, but there is **no backend batch API** — the CLI creates projects one by one, sequentially. Still use these flags instead of looping `create --from-file` yourself: one command returns `ids[]`, and per-file failures land in `skippedFiles` / `warnings` without discarding already-created projects. Not compatible with `--title` (single-file only).
+**Source:** video only (`--from-url` | `--from-file` | `--from-files` | `--from-dir`). **Required:** `--target-language`, and `--original-language` — **this tool has no `auto` original language; the user must state it explicitly.**
 
 | Setting                              | Flag                                                                     |
 | ------------------------------------ | ------------------------------------------------------------------------ |
@@ -121,13 +109,11 @@ Subtitles are generated locally (no export). Video/audio often need `export` fir
 | Custom font (local file)             | **`--font-file` only** — do not also pass `--font-family` / `--font-src` |
 | Preset font (free ok)                | `--font-family <fontFullName>` (no `--font-src` needed)                  |
 | Uploaded font / custom URL (Studio+) | `--font-family <fontFullName>` + `--font-src <fontURL>` (both, Studio+)  |
-| Title / folder                       | `--title` (single only), `--folder`                                      |
+| Folder                               | `--folder`                                                               |
 
 **Download:** `visual_translation` (mp4). No subtitle/tsv via CLI.
 
 ## Lipsync (`lipsync`)
-
-**No batch create** (no batch flags, no backend batch API). For multiple sources, run one `lipsync create` per source.
 
 **Source (exactly one):**
 
@@ -135,11 +121,12 @@ Subtitles are generated locally (no export). Video/audio often need `export` fir
 | ----------------------------- | --------------------------------------- |
 | `--from-url`                  | `from_this_video` (embedded in video)   |
 | `--from-file`                 | `from_this_video`                       |
+| `--from-files` / `--from-dir` | `from_this_video`                       |
 | `--from-translation <dub-id>` | Dubbed track from translate dub project |
 
 | Setting        | Flag                       |
 | -------------- | -------------------------- |
-| Face mode      | `--face-mode single\|more` |
-| Title / folder | `--title`, `--folder`      |
+| Face mode      | `--face-mode single\|more` (**required**, no default) |
+| Folder         | `--folder`                 |
 
 **Download:** `lipsync_video` (mp4).

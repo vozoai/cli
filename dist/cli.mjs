@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import {
   buildCli,
+  buildCliCommandErrorPayload,
   printJson,
   printStderr
-} from "./chunk-QJKJESXQ.mjs";
+} from "./chunk-3OP5HOYE.mjs";
 
 // src/cli.ts
 async function main() {
@@ -11,12 +12,9 @@ async function main() {
   await program.parseAsync(process.argv);
 }
 main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  printStderr(message);
-  printJson({
-    message,
-    status: "failed"
-  });
+  const payload = buildCliCommandErrorPayload(error);
+  printStderr(payload.message);
+  printJson(payload);
   process.exit(1);
 });
 //# sourceMappingURL=cli.mjs.map

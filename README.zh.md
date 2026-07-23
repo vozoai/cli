@@ -187,7 +187,7 @@ Point buckets:
 | Translate & Dub     | `translate_dub`       | `--from-file` / `--from-files` / `--from-dir` / `--from-url`（视频或音频） |
 | Translate Subtitles | `translate_subtitles` | 同上（仅视频）                                                             |
 | Visual Translate    | `visual_translate`    | 同上（仅视频；必须指定原始语言）                                           |
-| Lip Sync            | `lipsync`             | `--from-file` / `--from-url`                                               |
+| Lip Sync            | `lipsync`             | `--from-file` / `--from-files` / `--from-dir` / `--from-url` / `--from-translation` |
 
 每种 kind 均支持：
 

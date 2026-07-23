@@ -72,7 +72,7 @@ For each project, **only continue past create/poll when the user explicitly aske
 
 1. **Create** with the right `project <tool> create` flags.
 2. **Poll** `project <tool> get <id>` until the `processing` field is `false` (or status is failed). Do not interpret status strings yourself — `processing` already covers project status, sub-task, and export in-flight states. **Field path:** `get` stdout nests everything under a top-level `project` key — `{ "project": { ..., "processing": <bool>, "status": "...", "errorCode": <string|null>, "errorMessage": <string|null> } }` — so read `project.processing` (e.g. `jq -e '.project.processing'`), never the top level. If extraction returns null/missing, that is a script error: abort the poll loop instead of treating it as "still processing". When the status reports a failure, summarize with `project.errorCode` and `project.errorMessage` (CLI maps these to web-aligned copy).
-3. **Export** `project <tool> export <id>` when a media artifact is missing — **only if the user asked to export or download outputs**. Export checks for an existing download URL first: if one is present it returns `status: "skipped"` with `downloadUrl` and does not re-export; otherwise it returns `status: "started"`.
+3. **Export** `project <tool> export <id>` when a media artifact is missing — **only if the user asked to export or download outputs**. Export checks for an existing download URL first: if one is present it returns `status: "already_exported"` with `downloadUrl` and does not re-export; otherwise it returns `status: "started"`. Treat `already_exported` as success (artifact ready) — not a failure or skip-error.
 4. **Download** each requested artifact with `--output` — **only when the user asked for files on disk**. Pass a **directory** per project (trailing `/`) so files get the same product names as web downloads (e.g. `{title}_{language}_translated.mp4`, `{title}_{language}_subtitles.srt`); only pass a file path when the user explicitly asked for a custom name.
 5. **Share** `webUrl` from create/get. Whenever you hand out a project link, tell the user (especially first-time users) that they can open it to **review and edit the result** — fix translations, change voices, redub — if they are not satisfied; `project <tool> open <id>` opens it directly.
 6. **When processing finishes** (polling ends), proactively tell the user and ask whether they want the outputs downloaded (unless they already opted in/out at plan time). Offering is required; silently downloading is forbidden (§3.2), and silently stopping at "done" with no next step is poor service.
@@ -118,7 +118,7 @@ Before **any** create (single item or batch) or bulk download, show a plan that 
 Every setting that applies must appear with its **resolved value**, including:
 
 - values you will pass explicitly
-- settings omitted from the command but covered by a **CLI default** (write the default in plain language, e.g. `Original language: Auto-detect`, `Voice model: Auto`, `Face mode: single face`)
+- settings omitted from the command but covered by a **CLI default** (write the default in plain language, e.g. `Original language: Auto-detect`, `Voice model: Auto`)
 - settings **not supported** for the chosen source mode (write `not supported (batch)` instead of hiding the row)
 
 At minimum, always include:
@@ -129,9 +129,10 @@ At minimum, always include:
 - for Translate & Dub: **every** voice/subtitle/alignment setting (voice model, speakers, burn-in subtitles, remove original subs, auto-align, proofread before dubbing, prompt, glossary, custom subtitle file + usage)
 - for Translate Subtitles: subtitle display mode, remove original subs, prompt, glossary, custom subtitle file
 - for Visual Translate: original language, font choice
-- for Lip Sync: source mode and face mode
+- for Lip Sync: source mode and face mode (`--face-mode` is **required**; ask if missing — do not default to single)
 - whether the user wants the result **auto-downloaded when processing finishes** — offer it here once; a "yes" in the plan confirmation counts as the explicit download request required by §3.2
 - for batch: estimated project count, and whether it is a single-language batch or repeated per language
+- **estimated points** (label as estimate; formulas in `references/limits.md` / checklist) plus available balance from `auth points` when known
 - output / follow-up expectations (`webUrl`, whether `export` will be needed, which artifacts will be downloaded)
 - when summarizing languages for users, prefer human labels (`English`, `Chinese (Hong Kong)`); keep codes for the actual create command. For create, pass locale via `--target-language` tags like `zh-HK` when a region/accent is needed
 - quota warnings (points, Studio for batch, membership expiry)
@@ -170,7 +171,7 @@ For any `create` that involves translation, dubbing, or visual translate, `--tar
 
 **Do this instead:**
 
-1. Stop before `create` and ask which target language the user wants (optionally show `vozo-cli project languages <tool>`)
+1. Stop before `create` and ask which target language the user wants (optionally show readable options from `vozo-cli project languages <tool>` — names + codes, not codes alone)
 2. Put the resolved `--target-language` in the create plan (use a locale tag like `zh-HK` / `en-AU` when a region/accent is needed) and wait for confirmation
 3. Only pass `--target-language` after the user clearly states it (e.g. “into English”, “target en”, “dub to Japanese”) or confirms a plan that names the language
 
@@ -195,26 +196,12 @@ Do not confuse these two “folder” concepts:
 
 ### 3.1.3. Batch local files: use `--from-files` / `--from-dir` (important)
 
-For **`translate_dub`** and **`translate_subtitles`** only:
-
 | User intent                | Use                                                  | Do **not** use                          |
 | -------------------------- | ---------------------------------------------------- | --------------------------------------- |
 | 2+ local video/audio files | **One** `create` with `--from-files path1 path2 ...` | Repeated `create --from-file` per file  |
 | A folder of media          | **One** `create` with `--from-dir <path>`            | Listing files and looping `--from-file` |
 
-These flags call the **backend batch APIs** (`/v1/translations/batch_translate` for dub, `/v1/translate_captions/batch` for subtitles). The CLI uploads all files, then creates all projects in one request. stdout returns **`ids[]`** (not a single `id`).
-
-**Agent rules:**
-
-- If the user names multiple paths, a directory, or “batch upload”, resolve to `--from-files` or `--from-dir` in **one** command — never simulate batch by running N single-file creates.
-- Batch requires **Studio+** (see `references/limits.md`).
-- Batch does **not** support `--title` or `--subtitle-file` (single-file only). For per-file subtitles or custom titles, use `--from-file` one at a time or handle on the web.
-- `translate_dub` batch also does not pass `--speaker-number`; use single `--from-file` when speaker count matters.
-
-**`visual_translate` and `lipsync` have no backend batch API** — multiple sources are always processed as repeated single creates:
-
-- `visual_translate` still accepts `--from-files` / `--from-dir`, but the CLI simulates the batch internally by creating projects **one by one, sequentially** (slower than dub/subtitles true batch). Prefer these flags over looping yourself: the single command still returns `ids[]`, and per-file failures are reported in `skippedFiles` / `warnings` without discarding the projects that already succeeded.
-- `lipsync` has no batch flags at all — for multiple sources, run one `lipsync create` per source yourself.
+Applies to `translate_dub`, `translate_subtitles`, `visual_translate`, and `lipsync`. Batch stdout returns **`ids[]`**. Requires **Studio+**. Does **not** support `--subtitle-file` (single-file only). `translate_dub` batch also does not pass `--speaker-number`.
 
 ### 3.1.4. Translate & Dub voice cloning model (`--dub-preference`) — surface it, don't silently default (important)
 
@@ -262,12 +249,13 @@ Required-field reminders:
 - `translate_dub`: require a source and `--target-language`
 - `translate_subtitles`: require a video source and `--target-language`
 - `visual_translate`: require a video source, `--target-language`, and explicit `--original-language`
-- `lipsync`: require exactly one source from `--from-url` / `--from-file` / `--from-translation`
+- `lipsync`: require a video source (`--from-url` / `--from-file` / `--from-files` / `--from-dir`) or `--from-translation`
 - If the user gives a language and support is uncertain, run `vozo-cli project languages <tool>` before create and only proceed with supported values.
+- **When the user asks which languages are supported:** run `project languages <tool>`, then answer with readable names from `supportedOptions` (e.g. `English (en)`, `Chinese (Hong Kong) (zh-HK)`). Do **not** dump raw language codes alone.
 
-After a create succeeds, **do not report how many points it consumed.** Nothing available to the CLI is the actual charge: `estimateConsumedPoints` and the `references/limits.md` formulas are *pre-create estimates*, and real billing diverges from them — a project that fails is not charged at all, and an auto-clipped run bills the clipped length. Presenting an estimate as the deduction states as fact something you did not observe.
+After a create succeeds, **do not report how many points it consumed.** Nothing available to the CLI is the actual charge: `estimateConsumedPoints` and the `references/limits.md` formulas are _pre-create estimates_, and real billing diverges from them — a project that fails is not charged at all, and an auto-clipped run bills the clipped length. Presenting an estimate as the deduction states as fact something you did not observe.
 
-1. **Points belong in the create plan, never in the create result.** Show the estimate *before* the create (§3), labelled as an estimate, so the user can weigh it against their balance. Once the create returns, drop the subject.
+1. **Points belong in the create plan, never in the create result.** Show the estimate _before_ the create (§3), labelled as an estimate, so the user can weigh it against their balance. Once the create returns, drop the subject.
 2. **Do not restate the estimate as the cost after the fact** — not in the create summary, not in polling updates, not in the completion report. "Consumed N points" is a claim about billing; you have no billing source.
 3. **Never derive consumption by diffing `auth points` before and after create.** The balance is account-wide: concurrent projects from the web app, another terminal, or a parallel batch land in the same balance, and expiry/top-ups corrupt it too. A delta is not this create's cost — in either direction.
 4. Reading `auth points` is still correct for showing the **available balance** (quota warnings in the create plan, §3) — just never present it, or a delta of it, as this project's charge.
@@ -332,7 +320,7 @@ When a single user request names 2+ tools (dub, subtitles, visual translate, lip
 
 - No raw JSON unless asked.
 - Summaries: title, id, kind, languages (readable names), status, `webUrl`, local paths after download.
-- Lists: total count, then the most relevant rows; paginate with `--cursor` when needed.
+- Lists: `totalCount` is the server total and may include types CLI omits; use `items[]` + `nextCursor` (and `skippedUnsupportedCount` / `notice` when present). Paginate with `--cursor` when needed.
 
 ---
 
@@ -367,8 +355,11 @@ Read `references/limits.md` before `create` when the media may be near a duratio
 
 ## Failure Recovery
 
+- `status: "upgrade_required"` (not `"failed"`): the CLI is too old for the API. Tell the user to run `vozo-cli upgrade` (or install a newer version), then retry. Do not treat this as a project/auth failure.
+- `errorKind: "network"` on a failed command: connectivity/DNS/TLS/proxy issue (not auth or project failure). Report `network.code` / `message`; do **not** auto-retry — wait for the user to decide.
+- `upgradeSuggestion` on a **successful** JSON result: soft recommendation only — command already succeeded. Mention a newer CLI is available when convenient; do **not** stop the workflow or treat it as an error.
 - Processing: poll `get`; do not claim ready while `processing` is `true`.
-- Status `proofreading` with `processing: false`: the dub is done but voices need user confirmation before export. Do not keep polling and do not retry `export`; share `webUrl` and ask the user to confirm the voices in the web editor.
+- Status `proofreading` with `processing: false`: the dub is done but voices need user confirmation before export/download. Do not keep polling and do not retry `export` or `download`; share `webUrl` and ask the user to confirm the voices in the web editor.
 - Download missing URL: `export` → poll `get` until `processing` is `false` → retry `download` — **only when the user already asked for a download**.
 - Subtitle download empty: project may lack blocks/segments yet.
 - Unsupported request: state clearly; offer web `open` or supported alternative.

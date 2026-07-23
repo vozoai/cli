@@ -60,6 +60,15 @@ function getInstallTargets(target) {
       skillsDir: path.join(agentRootDir, 'skills'),
     });
   }
+  // Open Agent Skills global dir used by `npx skills add` and compatible agents.
+  if (target === 'agents' || target === 'all') {
+    const agentRootDir = path.join(home, '.agents');
+    targets.push({
+      target: 'agents',
+      agentRootDir,
+      skillsDir: path.join(agentRootDir, 'skills'),
+    });
+  }
 
   return targets;
 }
@@ -162,7 +171,7 @@ function main() {
 
   if (targetDirs.length === 0) {
     console.error(
-      'No supported agent directories were found (~/.cursor, ~/.codex, ~/.claude, ~/.workbuddy). Install an agent first.',
+      'No supported agent directories were found (~/.cursor, ~/.codex, ~/.claude, ~/.workbuddy, ~/.agents). Install an agent first.',
     );
     process.exit(1);
   }

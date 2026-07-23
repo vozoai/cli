@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/core/config.ts
-var CLI_VERSION = "0.0.2";
+var CLI_VERSION = "0.0.3";
 function formatCliVersionForApiHeader(version) {
   const withoutPrefix = version.trim().replace(/^v/i, "");
   const coreMatch = withoutPrefix.match(/^(\d+\.\d+\.\d+)/);
@@ -37,9 +37,40 @@ function isDevRequestDebugEnabled() {
   return CLI_BUILD_CHANNEL === "dev";
 }
 
+// src/core/cli-upgrade-notice.ts
+var pendingUpgradeSuggestion = null;
+var upgradeSuggestionNoted = false;
+function noteCliUpgradeSuggestion(suggestion) {
+  if (upgradeSuggestionNoted) {
+    return false;
+  }
+  upgradeSuggestionNoted = true;
+  pendingUpgradeSuggestion = suggestion;
+  return true;
+}
+function attachCliUpgradeSuggestion(payload) {
+  if (!pendingUpgradeSuggestion) {
+    return payload;
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || "upgradeSuggestion" in payload) {
+    return payload;
+  }
+  const upgradeSuggestion = pendingUpgradeSuggestion;
+  pendingUpgradeSuggestion = null;
+  return {
+    ...payload,
+    upgradeSuggestion
+  };
+}
+function resetCliUpgradeSuggestState() {
+  pendingUpgradeSuggestion = null;
+  upgradeSuggestionNoted = false;
+}
+
 // src/utils/output.ts
 function printJson(payload) {
-  process.stdout.write(`${JSON.stringify(payload, null, 2)}
+  const enriched = attachCliUpgradeSuggestion(payload);
+  process.stdout.write(`${JSON.stringify(enriched, null, 2)}
 `);
 }
 function printStdout(message) {
@@ -127,6 +158,134 @@ function buildRequestTimeoutError(url) {
     `Request to ${url.pathname} timed out after ${REQUEST_TIMEOUT_MS / 1e3}s. Check your network connection and try again.`
   );
 }
+function asErrorLike(value) {
+  return typeof value === "object" && value !== null ? value : null;
+}
+function readOptionalString(value) {
+  return typeof value === "string" && value.length > 0 ? value : void 0;
+}
+function readOptionalNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : void 0;
+}
+function collectErrorChain(error) {
+  const chain = [];
+  const queue = [error];
+  const seen = /* @__PURE__ */ new Set();
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current == null || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+    const like = asErrorLike(current);
+    if (!like) {
+      continue;
+    }
+    chain.push(like);
+    if (like.cause !== void 0) {
+      queue.push(like.cause);
+    }
+    if (Array.isArray(like.errors)) {
+      for (const nested of like.errors) {
+        queue.push(nested);
+      }
+    }
+  }
+  return chain;
+}
+function extractNetworkErrorDetails(error) {
+  const chain = collectErrorChain(error);
+  if (chain.length === 0) {
+    return null;
+  }
+  const details = {};
+  for (const item of chain) {
+    details.code ??= readOptionalString(item.code);
+    details.syscall ??= readOptionalString(item.syscall);
+    details.hostname ??= readOptionalString(item.hostname);
+    details.address ??= readOptionalString(item.address);
+    details.port ??= readOptionalNumber(item.port);
+    if (details.errno === void 0) {
+      if (typeof item.errno === "number" || typeof item.errno === "string") {
+        details.errno = item.errno;
+      }
+    }
+  }
+  return details.code || details.syscall || details.hostname || details.address || details.port !== void 0 || details.errno !== void 0 ? details : null;
+}
+function hintForNetworkCode(code) {
+  switch (code) {
+    case "ENOTFOUND":
+    case "EAI_AGAIN":
+      return "DNS lookup failed \u2014 the API host could not be resolved. Check DNS, VPN, offline mode, or VOZO_CLI_API_URL.";
+    case "ECONNREFUSED":
+      return "Connection refused \u2014 nothing accepted the TCP connection. Check that the API host/port is reachable and VOZO_CLI_API_URL is correct.";
+    case "ECONNRESET":
+    case "EPIPE":
+      return "Connection was reset mid-request. Often transient \u2014 retry; if it persists, check proxy/firewall stability.";
+    case "ETIMEDOUT":
+    case "UND_ERR_CONNECT_TIMEOUT":
+    case "UND_ERR_HEADERS_TIMEOUT":
+    case "UND_ERR_BODY_TIMEOUT":
+      return "Network timed out while connecting or waiting for headers. Check latency, firewall, proxy, or try again.";
+    case "ENETUNREACH":
+    case "EHOSTUNREACH":
+      return "Host/network unreachable. Check internet connectivity, VPN, or routing.";
+    case "CERT_HAS_EXPIRED":
+    case "CERT_NOT_YET_VALID":
+    case "UNABLE_TO_VERIFY_LEAF_SIGNATURE":
+    case "DEPTH_ZERO_SELF_SIGNED_CERT":
+    case "ERR_TLS_CERT_ALTNAME_INVALID":
+      return "TLS/certificate verification failed. Check system time, corporate SSL inspection, or custom CA trust.";
+    default:
+      return "Unable to reach the Vozo API. Check internet connectivity, proxy/firewall, DNS, and VOZO_CLI_API_URL, then retry.";
+  }
+}
+function summarizeNetworkCause(error) {
+  const chain = collectErrorChain(error);
+  const details = extractNetworkErrorDetails(error);
+  const parts = [];
+  if (details?.code) {
+    parts.push(details.code);
+  }
+  if (details?.syscall) {
+    parts.push(details.syscall);
+  }
+  const location = details?.hostname || (details?.address ? details.port !== void 0 ? `${details.address}:${details.port}` : details.address : void 0);
+  if (location) {
+    parts.push(location);
+  }
+  if (parts.length > 0) {
+    return parts.join(" ");
+  }
+  for (const item of chain) {
+    const message = readOptionalString(item.message);
+    if (message && message !== "fetch failed") {
+      return message;
+    }
+  }
+  const top = asErrorLike(error);
+  return readOptionalString(top?.message) ?? String(error);
+}
+function buildNetworkRequestError(error, url) {
+  const details = extractNetworkErrorDetails(error) ?? {};
+  if (!details.hostname) {
+    details.hostname = url.hostname;
+  }
+  const causeSummary = summarizeNetworkCause(error);
+  const hint = hintForNetworkCode(details.code);
+  const message = `Network request to ${url.origin}${url.pathname} failed: ${causeSummary}. ${hint}`;
+  return new CliNetworkError(message, {
+    details,
+    url: `${url.origin}${url.pathname}`
+  });
+}
+function rethrowFetchFailure(error, url) {
+  if (isAbortOrTimeoutError(error)) {
+    throw buildRequestTimeoutError(url);
+  }
+  throw buildNetworkRequestError(error, url);
+}
 var CliApiError = class extends Error {
   code;
   details;
@@ -139,6 +298,54 @@ var CliApiError = class extends Error {
     this.details = details;
   }
 };
+var CliUpgradeRequiredError = class extends CliApiError {
+  currentVersion;
+  minimumVersion;
+  constructor(message, status, options) {
+    super(message, status);
+    this.name = "CliUpgradeRequiredError";
+    this.currentVersion = options.currentVersion;
+    this.minimumVersion = options.minimumVersion;
+  }
+};
+var CliNetworkError = class extends Error {
+  details;
+  errorKind;
+  url;
+  constructor(message, options) {
+    super(message);
+    this.name = "CliNetworkError";
+    this.errorKind = "network";
+    this.url = options.url;
+    this.details = options.details ?? {};
+  }
+};
+function buildCliCommandErrorPayload(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof CliUpgradeRequiredError) {
+    return {
+      currentVersion: error.currentVersion,
+      message,
+      minimumVersion: error.minimumVersion,
+      status: "upgrade_required"
+    };
+  }
+  if (error instanceof CliNetworkError) {
+    return {
+      errorKind: "network",
+      message,
+      network: {
+        ...error.details,
+        url: error.url
+      },
+      status: "failed"
+    };
+  }
+  return {
+    message,
+    status: "failed"
+  };
+}
 function getApiBaseUrl(override) {
   return resolveApiBaseUrl(override);
 }
@@ -295,22 +502,26 @@ function buildCliUpgradeRequiredError(response) {
   if (!hint) {
     return null;
   }
-  return new CliApiError(hint, response.status);
+  return new CliUpgradeRequiredError(hint, response.status, {
+    currentVersion: CLI_VERSION_API_HEADER,
+    minimumVersion: getCliMinVersionHeader(response)
+  });
 }
-var cliUpgradeSuggestWarned = false;
 function warnCliUpgradeIfSuggested(response) {
-  if (cliUpgradeSuggestWarned) {
-    return;
-  }
   const hint = resolveCliUpgradeHint(response, "suggest");
   if (!hint) {
     return;
   }
-  cliUpgradeSuggestWarned = true;
+  const noted = noteCliUpgradeSuggestion({
+    currentVersion: CLI_VERSION_API_HEADER,
+    level: "suggest",
+    message: hint,
+    recommendedVersion: getCliMinVersionHeader(response)
+  });
+  if (!noted) {
+    return;
+  }
   printStderr(hint);
-}
-function resetCliUpgradeSuggestState() {
-  cliUpgradeSuggestWarned = false;
 }
 function handleCliUpgradeHeaders(response, options) {
   if (options?.skip) {
@@ -413,10 +624,7 @@ async function requestJson({
     });
     rawText = await response.text();
   } catch (error) {
-    if (isAbortOrTimeoutError(error)) {
-      throw buildRequestTimeoutError(url);
-    }
-    throw error;
+    rethrowFetchFailure(error, url);
   }
   const contentType = response.headers.get("content-type") ?? "";
   const hasJsonBody = contentType.includes("application/json");
@@ -466,10 +674,7 @@ async function requestDownload({
       signal: headerController.signal
     });
   } catch (error) {
-    if (isAbortOrTimeoutError(error)) {
-      throw buildRequestTimeoutError(url);
-    }
-    throw error;
+    rethrowFetchFailure(error, url);
   } finally {
     clearTimeout(headerTimer);
   }
@@ -529,10 +734,7 @@ async function requestDownloadProbe({
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     });
   } catch (error) {
-    if (isAbortOrTimeoutError(error)) {
-      throw buildRequestTimeoutError(url);
-    }
-    throw error;
+    rethrowFetchFailure(error, url);
   }
   const contentType = response.headers.get("content-type");
   if (!response.ok && response.status !== 206) {
@@ -654,98 +856,6 @@ async function clearStoredSession() {
 }
 function createDeviceId() {
   return randomUUID2();
-}
-
-// src/core/auth.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
-import { spawn as spawn2 } from "node:child_process";
-import { existsSync, mkdirSync, openSync } from "node:fs";
-import { dirname } from "node:path";
-import dayjs from "dayjs";
-
-// src/core/auth-login-pending.ts
-import fs from "node:fs";
-import path2 from "node:path";
-function getLoginPendingFilePath() {
-  return path2.join(path2.dirname(getSessionFilePath()), "login-pending.json");
-}
-function getLoginWorkerLogFilePath() {
-  return path2.join(path2.dirname(getSessionFilePath()), "login-worker.log");
-}
-function readLoginWorkerLog() {
-  const filePath = getLoginWorkerLogFilePath();
-  if (!fs.existsSync(filePath)) {
-    return null;
-  }
-  try {
-    const content = fs.readFileSync(filePath, "utf8").trim();
-    return content || null;
-  } catch {
-    return null;
-  }
-}
-function readLoginPending() {
-  const filePath = getLoginPendingFilePath();
-  if (!fs.existsSync(filePath)) {
-    return null;
-  }
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-function writeLoginPending(state) {
-  const filePath = getLoginPendingFilePath();
-  fs.mkdirSync(path2.dirname(filePath), { recursive: true, mode: 448 });
-  fs.writeFileSync(filePath, JSON.stringify(state, null, 2), {
-    encoding: "utf8",
-    mode: 384
-  });
-}
-async function clearLoginPending() {
-  try {
-    await fs.promises.rm(getLoginPendingFilePath(), { force: true });
-  } catch (error) {
-    const typedError = error;
-    if (typedError.code !== "ENOENT") {
-      throw error;
-    }
-  }
-}
-async function waitForLoginPendingFile(options) {
-  const intervalMs = options.intervalMs ?? 100;
-  const deadline = Date.now() + options.timeoutMs;
-  while (Date.now() < deadline) {
-    const pending = readLoginPending();
-    if (pending?.status === "pending") {
-      return pending;
-    }
-    if (pending?.status === "failed") {
-      throw new Error(pending.error);
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  return null;
-}
-
-// src/core/browser.ts
-import { spawn } from "node:child_process";
-async function openBrowser(url) {
-  const platform = process.platform;
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
-  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
-  await new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      detached: true,
-      stdio: "ignore"
-    });
-    child.on("error", reject);
-    child.on("spawn", () => {
-      child.unref();
-      resolve();
-    });
-  });
 }
 
 // src/core/callback.ts
@@ -924,13 +1034,19 @@ async function createAuthCallbackListener(options) {
     rejectDone = reject;
   });
   let settled = false;
+  function closeServer() {
+    clearTimeout(timeoutHandle);
+    if (typeof server.closeAllConnections === "function") {
+      server.closeAllConnections();
+    }
+    server.close();
+  }
   function finishWithResult(result) {
     if (settled) {
       return;
     }
     settled = true;
-    clearTimeout(timeoutHandle);
-    server.close();
+    closeServer();
     resolveDone(result);
   }
   function finishWithError(error) {
@@ -938,8 +1054,7 @@ async function createAuthCallbackListener(options) {
       return;
     }
     settled = true;
-    clearTimeout(timeoutHandle);
-    server.close();
+    closeServer();
     rejectDone(error);
   }
   const server = createServer((request, response) => {
@@ -1010,8 +1125,7 @@ async function createAuthCallbackListener(options) {
   server.listen(options.port ?? 0, "127.0.0.1", () => {
     const address = server.address();
     if (!address || typeof address === "string") {
-      clearTimeout(timeoutHandle);
-      server.close();
+      closeServer();
       rejectDone(new Error("Failed to start the local callback server."));
       return;
     }
@@ -1023,15 +1137,105 @@ async function createAuthCallbackListener(options) {
   return {
     done,
     dispose() {
-      if (settled) {
-        return;
+      if (!settled) {
+        settled = true;
       }
-      settled = true;
-      clearTimeout(timeoutHandle);
-      server.close();
+      closeServer();
     },
     ready
   };
+}
+
+// src/core/auth.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
+import { spawn as spawn2 } from "node:child_process";
+import { existsSync, mkdirSync, openSync } from "node:fs";
+import { dirname } from "node:path";
+import dayjs from "dayjs";
+
+// src/core/auth-login-pending.ts
+import fs from "node:fs";
+import path2 from "node:path";
+function getLoginPendingFilePath() {
+  return path2.join(path2.dirname(getSessionFilePath()), "login-pending.json");
+}
+function getLoginWorkerLogFilePath() {
+  return path2.join(path2.dirname(getSessionFilePath()), "login-worker.log");
+}
+function readLoginWorkerLog() {
+  const filePath = getLoginWorkerLogFilePath();
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  try {
+    const content = fs.readFileSync(filePath, "utf8").trim();
+    return content || null;
+  } catch {
+    return null;
+  }
+}
+function readLoginPending() {
+  const filePath = getLoginPendingFilePath();
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeLoginPending(state) {
+  const filePath = getLoginPendingFilePath();
+  fs.mkdirSync(path2.dirname(filePath), { recursive: true, mode: 448 });
+  fs.writeFileSync(filePath, JSON.stringify(state, null, 2), {
+    encoding: "utf8",
+    mode: 384
+  });
+}
+async function clearLoginPending() {
+  try {
+    await fs.promises.rm(getLoginPendingFilePath(), { force: true });
+  } catch (error) {
+    const typedError = error;
+    if (typedError.code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+async function waitForLoginPendingFile(options) {
+  const intervalMs = options.intervalMs ?? 100;
+  const deadline = Date.now() + options.timeoutMs;
+  while (Date.now() < deadline) {
+    const pending = readLoginPending();
+    if (pending?.status === "pending") {
+      return pending;
+    }
+    if (pending?.status === "failed") {
+      throw new Error(pending.error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return null;
+}
+
+// src/core/browser.ts
+import { spawn } from "node:child_process";
+async function openBrowser(url) {
+  const platform = process.platform;
+  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
+  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+  await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: "ignore"
+    });
+    child.on("error", reject);
+    child.on("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
 }
 
 // src/core/auth.ts
@@ -1215,8 +1419,7 @@ async function persistAuthenticatedSession(tokenSession) {
       userState: tokenSession.userState
     };
   }
-  void requestNewUserGiftPointsIfNeeded(tokenSession);
-  void prefetchCliClientRegion(tokenSession);
+  await requestNewUserGiftPointsIfNeeded(tokenSession);
   return user;
 }
 function profileFromStoredSession(storedSession) {
@@ -1385,6 +1588,9 @@ async function waitForRecentStoredSession(options) {
   const deadline = options.startedAt + options.timeoutMs;
   const intervalMs = options.intervalMs ?? 200;
   while (Date.now() < deadline) {
+    if (options.signal?.aborted) {
+      return null;
+    }
     const storedSession = await readStoredSession();
     if (storedSession && isRecentStoredSession(storedSession, {
       apiBaseUrl: options.apiBaseUrl,
@@ -1392,7 +1598,7 @@ async function waitForRecentStoredSession(options) {
     })) {
       return storedSession;
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    await sleep(intervalMs, options.signal);
   }
   return null;
 }
@@ -1467,6 +1673,44 @@ async function completeEmailLogin({
     user
   };
 }
+async function loginWithAccessToken({
+  accessToken,
+  apiBaseUrl,
+  refreshToken,
+  tokenType
+}) {
+  const trimmedAccessToken = accessToken.trim();
+  if (!trimmedAccessToken) {
+    throw new Error(
+      "Access token is required. Run `vozo-cli auth login-token --access-token <token>`."
+    );
+  }
+  const resolvedApiBaseUrl = getApiBaseUrl(apiBaseUrl);
+  const tokenSession = normalizeCallbackTokenSession({
+    accessToken: trimmedAccessToken,
+    apiBaseUrl: resolvedApiBaseUrl,
+    refreshToken: refreshToken?.trim() || void 0,
+    tokenType: tokenType?.trim() || void 0
+  });
+  let user;
+  try {
+    user = await fetchUserProfile(tokenSession);
+  } catch (error) {
+    if (error instanceof CliApiError && [401, 403].includes(error.status)) {
+      throw new Error(
+        "The access token is invalid or expired. Provide a valid token and try again."
+      );
+    }
+    throw error;
+  }
+  await writeStoredSession(buildStoredSession(tokenSession, user));
+  return {
+    authenticated: true,
+    sessionFile: getSessionFilePath(),
+    status: "authenticated",
+    user
+  };
+}
 async function loginWithBrowser({
   apiBaseUrl,
   callbackPath = DEFAULT_CALLBACK_PATH,
@@ -1491,7 +1735,7 @@ async function loginWithBrowser({
     state,
     timeoutMs: timeoutSeconds * 1e3
   });
-  const { callbackUrl, port: callbackPort } = await listener.ready;
+  const { callbackUrl } = await listener.ready;
   const loginUrl = new URL("/users/login", resolveWebAppUrl(webAppUrl));
   loginUrl.searchParams.set("cli_auth", "1");
   loginUrl.searchParams.set("from", "cli");
@@ -1517,6 +1761,7 @@ async function loginWithBrowser({
     } catch (_error) {
     }
   }
+  const storedSessionAbort = new AbortController();
   const waitingIntervalMs = 2e3;
   const waitingInterval = onWaiting ? setInterval(() => {
     void onWaiting({
@@ -1530,6 +1775,7 @@ async function loginWithBrowser({
     })),
     waitForRecentStoredSession({
       apiBaseUrl: resolvedApiBaseUrl,
+      signal: storedSessionAbort.signal,
       startedAt,
       timeoutMs: timeoutSeconds * 1e3
     }).then((storedSession) => ({
@@ -1550,6 +1796,7 @@ async function loginWithBrowser({
     }
     throw error;
   } finally {
+    storedSessionAbort.abort();
     if (waitingInterval) {
       clearInterval(waitingInterval);
     }
@@ -1557,8 +1804,11 @@ async function loginWithBrowser({
   let user;
   try {
     if (completion.kind === "stored_session" && completion.storedSession) {
-      listener.dispose();
-      user = completion.storedSession.profile ?? await fetchUserProfile(completion.storedSession);
+      if (completion.storedSession.profile) {
+        user = completion.storedSession.profile;
+      } else {
+        user = await fetchUserProfile(completion.storedSession);
+      }
     } else {
       const callbackSession = completion.kind === "callback" ? completion.callbackSession : await listener.done;
       await onCallbackReceived?.({
@@ -1595,6 +1845,7 @@ async function loginWithBrowser({
       user = await persistAuthenticatedSession(tokenSession);
     }
     await clearLoginPending();
+    listener.dispose();
     return {
       authenticated: true,
       callbackUrl,
@@ -1604,6 +1855,7 @@ async function loginWithBrowser({
       user
     };
   } catch (error) {
+    listener.dispose();
     if (trackPending) {
       writeLoginPending({
         error: error instanceof Error ? error.message : "Browser login failed while finalizing the session.",
@@ -1614,8 +1866,21 @@ async function loginWithBrowser({
     throw error;
   }
 }
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms, signal) {
+  if (signal?.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 async function waitForAuthenticatedSession(options) {
   const timeoutSeconds = options?.timeoutSeconds ?? 300;
@@ -1801,6 +2066,15 @@ var FILE_SIZE_LIMIT_BYTES = {
   visual_translate: 2 * GB,
   translate_dub: 2.5 * GB
 };
+var BATCH_CREATE_MAX_FILES = 40;
+function assertBatchFileCountAllowed(filePaths) {
+  if (filePaths.length <= BATCH_CREATE_MAX_FILES) {
+    return;
+  }
+  throw new Error(
+    `Batch create supports at most ${BATCH_CREATE_MAX_FILES} files at a time (got ${filePaths.length}). Split into smaller batches and try again.`
+  );
+}
 var DEFAULT_VIDEO_RESOLUTION_LIMIT = {
   long: 4096,
   short: 2304
@@ -1933,6 +2207,28 @@ function tierMaxUploadSeconds(userType) {
 }
 var STUDIO_PLAN_LABEL = "Studio / Studio XL / Studio XXL / Enterprise";
 var CREATOR_PROMPT_PLAN_LABEL = "Creator or Studio plan";
+var MAX_USER_PROMPT_LENGTH = 1e3;
+function assertUserPromptLength(userPrompt) {
+  if (userPrompt == null || userPrompt === "") {
+    return;
+  }
+  if (userPrompt.length > MAX_USER_PROMPT_LENGTH) {
+    throw new Error(
+      `\`--prompt\` must be at most ${MAX_USER_PROMPT_LENGTH} characters (got ${userPrompt.length}).`
+    );
+  }
+}
+function parseUserPrompt(value) {
+  const normalized = String(value ?? "");
+  try {
+    assertUserPromptLength(normalized);
+  } catch (error) {
+    throw new InvalidArgumentError(
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+  return normalized;
+}
 function assertMembershipForCreateOptions(userType, options) {
   const { isBusiness, isMember, isPro } = deriveMembershipFlags(userType);
   if ((options.batchItemCount ?? 0) > 1 && !isBusiness) {
@@ -1959,6 +2255,7 @@ function assertMembershipForCreateOptions(userType, options) {
       )
     );
   }
+  assertUserPromptLength(options.userPrompt);
   if (options.userPrompt?.trim() && (!isMember || isPro)) {
     throw new Error(
       buildEntitlementError(
@@ -3228,8 +3525,12 @@ async function uploadUserFontFromFile(options) {
     });
     rawText = await response.text();
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Font upload request failed.";
-    throw new Error(`Unable to upload font file: ${message}`);
+    if (typeof error === "object" && error !== null && "name" in error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      throw new Error(
+        `Unable to upload font file: request timed out after 120s. Check your network connection and try again.`
+      );
+    }
+    throw buildNetworkRequestError(error, url);
   }
   const parsedBody = rawText ? JSON.parse(rawText) : void 0;
   if (!response.ok) {
@@ -3363,9 +3664,6 @@ function buildFontUsage() {
     presetOrRemote: "Use `--font-family <fontFullName>` and `--font-src <fontURL>` from a preset or user font below (both required, Studio+ membership)."
   };
 }
-
-// src/core/language-capabilities.ts
-import { InvalidArgumentError as InvalidArgumentError2 } from "commander";
 
 // ../shared-lib/constants/language.ts
 var TranslateOriginalLanguageMap = {
@@ -3657,7 +3955,6 @@ var TranslateLanguageCodeMap = {
   Odia: "or",
   Punjabi: "pa"
 };
-var TranslateFrameLanguageCodeMap = TranslateLanguageCodeMap;
 var TranslateCode2Lang = Object.fromEntries(
   Object.entries(TranslateLanguageCodeMap).map(([key, value]) => [value, key])
 );
@@ -3750,114 +4047,6 @@ var TranslateLocaleCodeMap = {
     "Chinese (Shaanxi - Simplified)": "CN-shaanxi",
     "Chinese (Guangxi - Simplified)": "CN-GUANGXI",
     "Chinese (Wu - Simplified)": "wuu"
-  },
-  Dutch: {
-    "Dutch (Netherlands)": "NL",
-    "Dutch (Belgium)": "BE"
-  },
-  Swahili: {
-    "Swahili (Kenya)": "KE",
-    "Swahili (Tanzania)": "TZ"
-  },
-  Tamil: {
-    "Tamil (India)": "IN",
-    "Tamil (Malaysia)": "MY",
-    "Tamil (Singapore)": "SG",
-    "Tamil (Sri Lanka)": "LK"
-  },
-  Urdu: {
-    "Urdu (India)": "IN",
-    "Urdu (Pakistan)": "PK"
-  },
-  Inuktitut: {
-    "Inuktitut (Syllabics)": "CANS-CA",
-    "Inuktitut (Latin)": "LATN-CA"
-  }
-};
-var FrameTranslateLocaleCodeMap = {
-  English: {
-    "English (Australia)": "AU",
-    "English (Canada)": "CA",
-    "English (United Kingdom)": "GB",
-    "English (Ireland)": "IE",
-    "English (India)": "IN",
-    "English (United States)": "US",
-    "English (Hong Kong)": "HK",
-    "English (Kenya)": "KE",
-    "English (New Zealand)": "NZ",
-    "English (Nigeria)": "NG",
-    "English (Philippines)": "PH",
-    "English (Singapore)": "SG",
-    "English (South Africa)": "ZA",
-    "English (Tanzania)": "TZ"
-  },
-  Spanish: {
-    "Spanish (Spain)": "ES",
-    "Spanish (Mexico)": "MX",
-    "Spanish (Argentina)": "AR",
-    "Spanish (Bolivia)": "BO",
-    "Spanish (Chile)": "CL",
-    "Spanish (Colombia)": "CO",
-    "Spanish (Costa Rica)": "CR",
-    "Spanish (Cuba)": "CU",
-    "Spanish (Dominican Republic)": "DO",
-    "Spanish (Ecuador)": "EC",
-    "Spanish (El Salvador)": "SV",
-    "Spanish (Equatorial Guinea)": "GQ",
-    "Spanish (Guatemala)": "GT",
-    "Spanish (Honduras)": "HN",
-    "Spanish (Nicaragua)": "NI",
-    "Spanish (Panama)": "PA",
-    "Spanish (Paraguay)": "PY",
-    "Spanish (Peru)": "PE",
-    "Spanish (Puerto Rico)": "PR",
-    "Spanish (United States)": "US",
-    "Spanish (Uruguay)": "UY",
-    "Spanish (Venezuela)": "VE"
-  },
-  Arabic: {
-    "Arabic (Egypt)": "EG",
-    "Arabic (Saudi Arabia)": "SA",
-    "Arabic (Algeria)": "DZ",
-    "Arabic (Bahrain)": "BH",
-    "Arabic (Iraq)": "IQ",
-    "Arabic (Jordan)": "JO",
-    "Arabic (Kuwait)": "KW",
-    "Arabic (Lebanon)": "LB",
-    "Arabic (Libya)": "LY",
-    "Arabic (Morocco)": "MA",
-    "Arabic (Oman)": "OM",
-    "Arabic (Qatar)": "QA",
-    "Arabic (Syria)": "SY",
-    "Arabic (Tunisia)": "TN",
-    "Arabic (United Arab Emirates)": "AE",
-    "Arabic (Yemen)": "YE"
-  },
-  Portuguese: {
-    "Portuguese (Brazil)": "BR",
-    "Portuguese (Portugal)": "PT"
-  },
-  French: {
-    "French (Canada)": "CA",
-    "French (Switzerland)": "CH",
-    "French (France)": "FR",
-    "French (Belgium)": "BE"
-  },
-  German: {
-    "German (Austria)": "AT",
-    "German (Switzerland)": "CH",
-    "German (Germany)": "DE"
-  },
-  Chinese: {
-    "Chinese (Mainland China)": "CN",
-    "Chinese (Hong Kong)": "HK",
-    "Chinese (Taiwan)": "TW",
-    "Chinese (Jilu Mandarin - Simplified)": "CN-shandong",
-    "Chinese (Northeastern Mandarin - Simplified)": "CN-liaoning",
-    "Chinese (Southwestern Mandarin - Simplified)": "CN-sichuan",
-    "Chinese (Zhongyuan Mandarin Henan - Simplified)": "CN-henan",
-    "Chinese (Zhongyuan Mandarin Shaanxi - Simplified)": "CN-shaanxi",
-    "Chinese (Guangxi Mandarin - Simplified)": "CN-GUANGXI"
   },
   Dutch: {
     "Dutch (Netherlands)": "NL",
@@ -4082,7 +4271,113 @@ function getLangCountry(language) {
   return language.replace(/\s*\(.*\)/, "");
 }
 
+// src/core/language-labels.ts
+var FRAME_ORIGINAL_CODE_TO_NAME = Object.fromEntries(
+  Object.entries(TranslateFrameOriginalLanguageMap).map(([name, code]) => [
+    code.toLowerCase(),
+    name
+  ])
+);
+var LOCALE_CODE_TO_LABEL = buildLocaleCodeToLabelMap();
+function buildLocaleCodeToLabelMap() {
+  const map = /* @__PURE__ */ new Map();
+  for (const [languageName, locales] of Object.entries(
+    TranslateLocaleCodeMap
+  )) {
+    for (const [label, localeCode] of Object.entries(locales)) {
+      map.set(`${languageName}:${localeCode}`.toLowerCase(), label);
+      map.set(localeCode.toLowerCase(), label);
+    }
+  }
+  return map;
+}
+function normalizeCode(code) {
+  return code.trim().toLowerCase();
+}
+function lookupShortLanguageCode(code) {
+  return TranslateCode2Lang[code] ?? TranslateCode2Lang[code.split("-")[0] ?? ""] ?? null;
+}
+function resolveOriginalLanguageLabel(code) {
+  if (!code) {
+    return null;
+  }
+  const normalized = normalizeCode(code);
+  if (normalized === "auto") {
+    return "Auto-detect";
+  }
+  return TranslateOriginalLanguageKeyMap[normalized] ?? FRAME_ORIGINAL_CODE_TO_NAME[normalized] ?? TranslateTargetLanguageKeyMap[normalized] ?? lookupShortLanguageCode(normalized) ?? code;
+}
+function resolveTargetLanguageLabel(code) {
+  if (!code) {
+    return null;
+  }
+  const normalized = normalizeCode(code);
+  return TranslateTargetLanguageKeyMap[normalized] ?? TranslateOriginalLanguageKeyMap[normalized] ?? lookupShortLanguageCode(normalized) ?? code;
+}
+function resolveTargetLocaleLabel(targetLanguage, targetLocale) {
+  if (!targetLocale) {
+    return null;
+  }
+  const normalizedLocale = normalizeCode(targetLocale);
+  const languageName = resolveTargetLanguageLabel(targetLanguage);
+  if (languageName) {
+    const localeLabel = LOCALE_CODE_TO_LABEL.get(
+      `${languageName}:${targetLocale}`.toLowerCase()
+    );
+    if (localeLabel) {
+      return localeLabel;
+    }
+  }
+  const fullTag = targetLocale.includes("-") ? normalizedLocale : targetLanguage ? `${normalizeCode(targetLanguage)}-${normalizedLocale}` : normalizedLocale;
+  const fullTagLabel = TranslateOriginalLanguageKeyMap[fullTag] ?? TranslateTargetLanguageKeyMap[fullTag];
+  if (fullTagLabel) {
+    return fullTagLabel;
+  }
+  const localeOnlyLabel = LOCALE_CODE_TO_LABEL.get(normalizedLocale);
+  if (localeOnlyLabel) {
+    return localeOnlyLabel;
+  }
+  return targetLocale;
+}
+function resolveLanguageCapabilityLabel(field, value) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return value;
+  }
+  if (field === "original-language") {
+    return resolveOriginalLanguageLabel(trimmed) ?? trimmed;
+  }
+  const direct = resolveTargetLanguageLabel(trimmed);
+  if (direct && normalizeCode(direct) !== normalizeCode(trimmed)) {
+    return direct;
+  }
+  const separator = trimmed.indexOf("-");
+  if (separator > 0) {
+    const language = trimmed.slice(0, separator);
+    const locale = trimmed.slice(separator + 1);
+    const localeLabel = resolveTargetLocaleLabel(language, locale);
+    if (localeLabel && normalizeCode(localeLabel) !== normalizeCode(trimmed)) {
+      return localeLabel;
+    }
+  }
+  return direct ?? trimmed;
+}
+function enrichProjectLanguageLabels(project) {
+  return {
+    ...project,
+    originalLanguageLabel: resolveOriginalLanguageLabel(
+      project.originalLanguage
+    ),
+    targetLanguageLabel: resolveTargetLanguageLabel(project.targetLanguage),
+    targetLocaleLabel: resolveTargetLocaleLabel(
+      project.targetLanguage,
+      project.targetLocale
+    )
+  };
+}
+
 // src/core/language-capabilities.ts
+import { InvalidArgumentError as InvalidArgumentError2 } from "commander";
 function uniqueSorted(values) {
   return Array.from(new Set(values)).sort(
     (left, right) => left.localeCompare(right)
@@ -4116,22 +4411,20 @@ function buildLocaleTags(languageCodeMap, localeCodeMap) {
   return values;
 }
 function buildFieldCapabilities(lookup, options) {
+  const supportedValues = lookup?.values ?? [];
   return {
     allowAuto: Boolean(options.allowAuto),
     required: options.required,
-    supportedValues: lookup?.values ?? []
+    supportedOptions: supportedValues.map((value) => ({
+      label: resolveLanguageCapabilityLabel(options.field, value),
+      value
+    })),
+    supportedValues
   };
 }
 var TRANSLATE_TARGET_LANGUAGE_VALUES = [
   ...Object.values(TranslateLanguageCodeMap),
   ...buildLocaleTags(TranslateLanguageCodeMap, TranslateLocaleCodeMap)
-];
-var VISUAL_TARGET_LANGUAGE_VALUES = [
-  ...Object.values(TranslateFrameLanguageCodeMap),
-  ...buildLocaleTags(
-    TranslateFrameLanguageCodeMap,
-    FrameTranslateLocaleCodeMap
-  )
 ];
 var CAPABILITY_DEFINITIONS = {
   lipsync: {
@@ -4169,12 +4462,9 @@ var CAPABILITY_DEFINITIONS = {
     originalLanguage: createLookup(
       buildOriginalLanguageValues(TranslateFrameOriginalLanguageMap)
     ),
-    targetLanguage: createLookup(VISUAL_TARGET_LANGUAGE_VALUES),
+    targetLanguage: createLookup(TRANSLATE_TARGET_LANGUAGE_VALUES),
     targetLocale: createLookup(
-      buildLocaleTags(
-        TranslateFrameLanguageCodeMap,
-        FrameTranslateLocaleCodeMap
-      )
+      buildLocaleTags(TranslateLanguageCodeMap, TranslateLocaleCodeMap)
     )
   }
 };
@@ -4204,9 +4494,11 @@ function getProjectLanguageCapabilities(kind) {
     kind,
     originalLanguage: buildFieldCapabilities(definition.originalLanguage, {
       allowAuto: definition.allowAutoOriginalLanguage,
+      field: "original-language",
       required: kind === "visual_translate"
     }),
     targetLanguage: buildFieldCapabilities(definition.targetLanguage, {
+      field: "target-language",
       required: kind === "translate_dub" || kind === "translate_subtitles" || kind === "visual_translate"
     })
   };
@@ -4719,6 +5011,15 @@ async function assertCreateAllowed(options) {
   return { features, membership, points, profile };
 }
 
+// src/core/project-title.ts
+var MAX_PROJECT_TITLE_LENGTH = 100;
+function truncateProjectTitle(title) {
+  return title.slice(0, MAX_PROJECT_TITLE_LENGTH);
+}
+function resolveProjectTitle(title) {
+  return truncateProjectTitle(title);
+}
+
 // src/core/subtitle-file.ts
 import { readFile as readFile3 } from "node:fs/promises";
 var SUBTITLE_FILE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -4971,7 +5272,7 @@ function isCalloutTextExportBlockedStatus(status) {
   if (CALLOUT_TEXT_EXPORT_BLOCKED_STATUS_SET.has(normalized)) {
     return true;
   }
-  return normalized.startsWith("pending_");
+  return false;
 }
 function hasCalloutTextsInProcessing(rawProject) {
   return extractCalloutTexts(rawProject).some((item) => {
@@ -5018,7 +5319,7 @@ function isExportBlockedFailedStatus(status) {
   if (!normalized) {
     return false;
   }
-  return normalized === "failed";
+  return normalized === "failed" || normalized.endsWith("_failed");
 }
 function isProjectProcessing(kind, rawProject, status) {
   const effectiveStatus = resolveProjectExportGuardStatus(
@@ -5051,6 +5352,19 @@ function assertProjectNotFailedForArtifactAccess(options) {
       `Project ${options.id} failed (status: \`${effectiveStatus}\`) and cannot be exported or downloaded.`
     );
   }
+}
+function assertProjectNotAwaitingProofreadingForDownload(options) {
+  const effectiveStatus = resolveProjectExportGuardStatus(
+    options.kind,
+    options.rawProject,
+    options.status
+  );
+  if (normalizeProjectStatus(effectiveStatus) !== AWAITING_USER_ACTION_STATUS) {
+    return;
+  }
+  throw new Error(
+    `Project ${options.id} is awaiting voice proofreading and cannot be downloaded yet. Confirm the voices in the web editor (see webUrl) to start dubbing, then export and download.`
+  );
 }
 function assertProjectNotCurrentlyExporting(options) {
   if (isProjectCurrentlyExporting(options.status)) {
@@ -5279,88 +5593,6 @@ function buildSubtitleFileName(options) {
   return `${title}_${sanitizeFileNameSegment(languageText)}_subtitles.${options.format}`;
 }
 
-// src/core/language-labels.ts
-var FRAME_ORIGINAL_CODE_TO_NAME = Object.fromEntries(
-  Object.entries(TranslateFrameOriginalLanguageMap).map(([name, code]) => [
-    code.toLowerCase(),
-    name
-  ])
-);
-var LOCALE_CODE_TO_LABEL = buildLocaleCodeToLabelMap();
-function buildLocaleCodeToLabelMap() {
-  const map = /* @__PURE__ */ new Map();
-  for (const [languageName, locales] of Object.entries(
-    TranslateLocaleCodeMap
-  )) {
-    for (const [label, localeCode] of Object.entries(locales)) {
-      map.set(`${languageName}:${localeCode}`.toLowerCase(), label);
-      map.set(localeCode.toLowerCase(), label);
-    }
-  }
-  return map;
-}
-function normalizeCode(code) {
-  return code.trim().toLowerCase();
-}
-function lookupShortLanguageCode(code) {
-  return TranslateCode2Lang[code] ?? TranslateCode2Lang[code.split("-")[0] ?? ""] ?? null;
-}
-function resolveOriginalLanguageLabel(code) {
-  if (!code) {
-    return null;
-  }
-  const normalized = normalizeCode(code);
-  if (normalized === "auto") {
-    return "Auto-detect";
-  }
-  return TranslateOriginalLanguageKeyMap[normalized] ?? FRAME_ORIGINAL_CODE_TO_NAME[normalized] ?? TranslateTargetLanguageKeyMap[normalized] ?? lookupShortLanguageCode(normalized) ?? code;
-}
-function resolveTargetLanguageLabel(code) {
-  if (!code) {
-    return null;
-  }
-  const normalized = normalizeCode(code);
-  return TranslateTargetLanguageKeyMap[normalized] ?? TranslateOriginalLanguageKeyMap[normalized] ?? lookupShortLanguageCode(normalized) ?? code;
-}
-function resolveTargetLocaleLabel(targetLanguage, targetLocale) {
-  if (!targetLocale) {
-    return null;
-  }
-  const normalizedLocale = normalizeCode(targetLocale);
-  const languageName = resolveTargetLanguageLabel(targetLanguage);
-  if (languageName) {
-    const localeLabel = LOCALE_CODE_TO_LABEL.get(
-      `${languageName}:${targetLocale}`.toLowerCase()
-    );
-    if (localeLabel) {
-      return localeLabel;
-    }
-  }
-  const fullTag = targetLocale.includes("-") ? normalizedLocale : targetLanguage ? `${normalizeCode(targetLanguage)}-${normalizedLocale}` : normalizedLocale;
-  const fullTagLabel = TranslateOriginalLanguageKeyMap[fullTag] ?? TranslateTargetLanguageKeyMap[fullTag];
-  if (fullTagLabel) {
-    return fullTagLabel;
-  }
-  const localeOnlyLabel = LOCALE_CODE_TO_LABEL.get(normalizedLocale);
-  if (localeOnlyLabel) {
-    return localeOnlyLabel;
-  }
-  return targetLocale;
-}
-function enrichProjectLanguageLabels(project) {
-  return {
-    ...project,
-    originalLanguageLabel: resolveOriginalLanguageLabel(
-      project.originalLanguage
-    ),
-    targetLanguageLabel: resolveTargetLanguageLabel(project.targetLanguage),
-    targetLocaleLabel: resolveTargetLocaleLabel(
-      project.targetLanguage,
-      project.targetLocale
-    )
-  };
-}
-
 // src/core/project.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
 import { mkdir as mkdir2, stat as stat2, writeFile as writeFile3 } from "node:fs/promises";
@@ -5506,7 +5738,7 @@ var DETAIL_KIND_TO_PATH = {
   visual_translate: "/v1/translate_frames"
 };
 var DETAIL_KIND_TO_WEB_PATH = {
-  "audio-translation": "/translation",
+  "audio-translation": "/audio_translation",
   lipsync: "/lipsync",
   "talking-photo": "/lipsync",
   translate_dub: "/translation",
@@ -5514,7 +5746,7 @@ var DETAIL_KIND_TO_WEB_PATH = {
   visual_translate: "/frame_translation"
 };
 var DETAIL_KIND_TO_OPEN_PATH = {
-  "audio-translation": "/translation",
+  "audio-translation": "/audio_translation",
   translate_dub: "/translation"
 };
 var PRIMARY_EXPORT_ARTIFACT = {
@@ -5944,8 +6176,10 @@ function getPreferredVideoUrl(video, fallbackUrl) {
 function getPreferredThumbnailUrl(video) {
   return video.thumbnail ?? video.thumbUrl ?? video.thumb_url ?? "";
 }
-function getPreferredTitle(video, fallbackTitle, overrideTitle) {
-  return overrideTitle?.trim() || video.pageTitle || video.page_title || video.name || fallbackTitle;
+function getPreferredTitle(video, fallbackTitle) {
+  return resolveProjectTitle(
+    video.pageTitle || video.page_title || video.name || fallbackTitle
+  );
 }
 async function uploadSingleLocalFile(options) {
   await ensureLocalFileReadable(options.filePath);
@@ -6005,7 +6239,7 @@ async function createBatchUploadEntries(options) {
     });
     uploadedFiles.push({
       duration,
-      filename: getLocalFileBaseName(filePath),
+      filename: truncateProjectTitle(getLocalFileBaseName(filePath)),
       media_type: mediaType,
       path: uploadPath
     });
@@ -6013,6 +6247,7 @@ async function createBatchUploadEntries(options) {
   return uploadedFiles;
 }
 async function prepareBatchFilePathsForCreate(options) {
+  assertBatchFileCountAllowed(options.filePaths);
   const { filePaths, skippedFiles } = await filterBatchFilePathsForCreate(
     options
   );
@@ -6438,6 +6673,29 @@ function resolveProjectListNextCursor(options) {
   }
   return lastId;
 }
+var UNSUPPORTED_LIST_NOTICE = "Some projects were omitted from items because this CLI does not manage their type (e.g. talking photo, voice studio). totalCount is the server total and may exceed the sum of listable items across pages. Paginate with nextCursor; do not treat totalCount as the listable count.";
+function buildCliProjectListPage(options) {
+  const items = options.pageItems.filter(
+    (item) => CLI_LISTABLE_KINDS.has(item.kind)
+  );
+  const skippedUnsupportedCount = options.pageItems.length - items.length;
+  return {
+    folderId: options.folderId,
+    items,
+    kind: options.kind,
+    nextCursor: resolveProjectListNextCursor({
+      hasCursor: options.hasCursor,
+      items: options.pageItems,
+      pageSize: options.pageSize,
+      totalCount: options.totalCount
+    }),
+    notice: skippedUnsupportedCount > 0 ? UNSUPPORTED_LIST_NOTICE : null,
+    pageSize: options.pageSize,
+    searchKey: options.searchKey,
+    skippedUnsupportedCount,
+    totalCount: options.totalCount
+  };
+}
 async function listProjects(options) {
   const projectType = options.kind === "all" ? void 0 : LIST_KIND_TO_QUERY_TYPE[options.kind];
   const response = await authorizedRequest2({
@@ -6460,25 +6718,17 @@ async function listProjects(options) {
     }
     return summary;
   });
-  const items = pageItems.filter((item) => CLI_LISTABLE_KINDS.has(item.kind));
   const pageSize = response.data.pageSize ?? response.data.page_size ?? options.limit ?? null;
   const totalCount = response.data.totalCount ?? response.data.total_count ?? null;
-  return {
+  return buildCliProjectListPage({
     folderId: options.folderId ?? null,
-    items,
+    hasCursor: Boolean(options.cursor),
     kind: options.kind,
-    // Cursor advances over the unfiltered page so filtered-out items are
-    // skipped rather than fetched again.
-    nextCursor: resolveProjectListNextCursor({
-      hasCursor: Boolean(options.cursor),
-      items: pageItems,
-      pageSize,
-      totalCount
-    }),
+    pageItems,
     pageSize,
     searchKey: options.searchKey ?? "",
     totalCount
-  };
+  });
 }
 async function getProject(options) {
   const { data, kind } = await fetchProjectDetail({
@@ -6540,7 +6790,7 @@ async function exportProject(options) {
       id: options.id,
       kind: resolvedKind,
       project: projectDetail.project,
-      status: "skipped"
+      status: "already_exported"
     };
   }
   const response = await authorizedRequest2({
@@ -6607,6 +6857,12 @@ async function downloadProjectArtifact(options) {
     parseArtifactType(options.artifact)
   );
   assertProjectNotFailedForArtifactAccess({
+    id: options.id,
+    kind: resolvedKind,
+    rawProject: projectDetail.project.raw,
+    status: projectDetail.project.status
+  });
+  assertProjectNotAwaitingProofreadingForDownload({
     id: options.id,
     kind: resolvedKind,
     rawProject: projectDetail.project.raw,
@@ -7076,7 +7332,7 @@ async function createTranslationProjectFromUrl(options) {
   const durationForCreate = firstUserClip?.durationSeconds ?? resolvedDuration;
   const speakerNumber = options.speakerNumber ?? "Auto";
   const [minSpeakerNumber, maxSpeakerNumber] = resolveSpeakerRange(speakerNumber);
-  const title = getPreferredTitle(video, "Translation Project", options.title);
+  const title = getPreferredTitle(video, "Translation Project");
   const extension = getVideoExtension(video);
   const createResponse = await authorizedRequest2({
     apiBaseUrl: resolvedApiBaseUrl,
@@ -7185,7 +7441,7 @@ async function createTranslationProjectFromFile(options) {
   });
   const durationForCreate = firstUserClip?.durationSeconds ?? duration;
   const extension = getLocalFileExtension(options.filePath) || (isAudio ? "mp3" : "mp4");
-  const title = options.title?.trim() || getLocalFileTitle(options.filePath);
+  const title = resolveProjectTitle(getLocalFileTitle(options.filePath));
   const [minSpeakerNumber, maxSpeakerNumber] = resolveSpeakerRange(
     options.speakerNumber ?? "Auto"
   );
@@ -7374,11 +7630,7 @@ async function createCaptionProjectFromUrl(options) {
     apiBaseUrl: session.apiBaseUrl,
     path: "/v1/translate_captions/upload_prepare"
   });
-  const title = getPreferredTitle(
-    video,
-    "Subtitle Translation Project",
-    options.title
-  );
+  const title = getPreferredTitle(video, "Subtitle Translation Project");
   const uploadVideoPath = buildPreparedUploadPath(
     preparedUpload.uploadDir,
     getVideoExtension(video)
@@ -7458,7 +7710,7 @@ async function createCaptionProjectFromFile(options) {
     path: "/v1/translate_captions/upload_prepare"
   });
   const extension = getLocalFileExtension(options.filePath) || "mp4";
-  const title = options.title?.trim() || getLocalFileTitle(options.filePath);
+  const title = resolveProjectTitle(getLocalFileTitle(options.filePath));
   const uploadVideoPath = buildPreparedUploadPath(
     preparedUpload.uploadDir,
     extension
@@ -7630,11 +7882,7 @@ async function createFrameTranslationProjectFromUrl(options) {
     apiBaseUrl: session.apiBaseUrl,
     path: "/v1/translate_frames/upload_prepare"
   });
-  const title = getPreferredTitle(
-    video,
-    "Visual Translation Project",
-    options.title
-  );
+  const title = getPreferredTitle(video, "Visual Translation Project");
   const uploadVideoPath = buildPreparedUploadPath(
     preparedUpload.uploadDir,
     getVideoExtension(video)
@@ -7739,7 +7987,7 @@ async function createFrameTranslationProjectFromFile(options) {
     path: "/v1/translate_frames/upload_prepare"
   });
   const extension = getLocalFileExtension(options.filePath) || "mp4";
-  const title = options.title?.trim() || getLocalFileTitle(options.filePath);
+  const title = resolveProjectTitle(getLocalFileTitle(options.filePath));
   const uploadVideoPath = buildPreparedUploadPath(
     preparedUpload.uploadDir,
     extension
@@ -7876,7 +8124,7 @@ async function createLipsyncProjectFromUrl(options) {
     ],
     kind: "lipsync"
   });
-  const title = getPreferredTitle(video, "Lip Sync Project", options.title);
+  const title = getPreferredTitle(video, "Lip Sync Project");
   const extension = getVideoExtension(video);
   const createResponse = await authorizedRequest2({
     apiBaseUrl: session.apiBaseUrl,
@@ -7894,7 +8142,7 @@ async function createLipsyncProjectFromUrl(options) {
     body: compactJsonObject({
       audio_source: "from_this_video",
       duration: Number(video.duration),
-      face_mode: options.faceMode ?? "single",
+      face_mode: options.faceMode,
       folder_id: folderId,
       link: getPreferredVideoUrl(video, options.sourceUrl),
       lip_sync_mode: LIPSYNC_CREATE_MODE,
@@ -7916,7 +8164,7 @@ async function createLipsyncProjectFromUrl(options) {
   };
 }
 async function createLipsyncProjectFromFile(options) {
-  const folderId = await resolveValidatedProjectFolderId({
+  const folderId = options.skipCreateGuard ? options.folderId : await resolveValidatedProjectFolderId({
     apiBaseUrl: options.apiBaseUrl,
     folderId: options.folderId
   });
@@ -7927,19 +8175,21 @@ async function createLipsyncProjectFromFile(options) {
       "Lipsync file create currently supports local video files only."
     );
   }
-  const title = options.title?.trim() || getLocalFileTitle(options.filePath);
+  const title = resolveProjectTitle(getLocalFileTitle(options.filePath));
   const extension = getLocalFileExtension(options.filePath) || "mp4";
   const duration = await getLocalMediaDuration(options.filePath);
-  await assertCreateAllowed({
-    apiBaseUrl: options.apiBaseUrl,
-    items: [
-      buildLipsyncCreateGuardItem({
-        durationSeconds: duration,
-        filePath: options.filePath
-      })
-    ],
-    kind: "lipsync"
-  });
+  if (!options.skipCreateGuard) {
+    await assertCreateAllowed({
+      apiBaseUrl: options.apiBaseUrl,
+      items: [
+        buildLipsyncCreateGuardItem({
+          durationSeconds: duration,
+          filePath: options.filePath
+        })
+      ],
+      kind: "lipsync"
+    });
+  }
   const createResponse = await authorizedRequest2({
     apiBaseUrl: options.apiBaseUrl,
     body: compactJsonObject({
@@ -7971,7 +8221,7 @@ async function createLipsyncProjectFromFile(options) {
     body: compactJsonObject({
       audio_source: "from_this_video",
       duration,
-      face_mode: options.faceMode ?? "single",
+      face_mode: options.faceMode,
       folder_id: folderId,
       lip_sync_mode: LIPSYNC_CREATE_MODE,
       original_video_duration: duration,
@@ -7990,6 +8240,54 @@ async function createLipsyncProjectFromFile(options) {
     webUrl: buildProjectWebUrl("lipsync", createResponse.data.pid)
   };
 }
+async function batchCreateLipsyncProjectsFromFiles(options) {
+  const folderId = await resolveValidatedProjectFolderId({
+    apiBaseUrl: options.apiBaseUrl,
+    folderId: options.folderId
+  });
+  const prepared = await prepareBatchFilePathsForCreate({
+    apiBaseUrl: options.apiBaseUrl,
+    filePaths: options.filePaths,
+    kind: "lipsync"
+  });
+  await assertCreateAllowed({
+    apiBaseUrl: options.apiBaseUrl,
+    items: prepared.filePaths.map(
+      (filePath) => buildLipsyncCreateGuardItem({ filePath })
+    ),
+    kind: "lipsync"
+  });
+  const ids = [];
+  const skippedFiles = [...prepared.skippedFiles];
+  const warnings = [...prepared.warnings];
+  let firstError = null;
+  for (const filePath of prepared.filePaths) {
+    try {
+      const result = await createLipsyncProjectFromFile({
+        apiBaseUrl: options.apiBaseUrl,
+        faceMode: options.faceMode,
+        filePath,
+        folderId,
+        skipCreateGuard: true
+      });
+      ids.push(result.id);
+    } catch (error) {
+      firstError ??= error;
+      const reason = error instanceof Error ? error.message : String(error);
+      skippedFiles.push({ filePath, reason: `create failed: ${reason}` });
+      warnings.push(`Skipped ${filePath}: create failed: ${reason}.`);
+    }
+  }
+  if (!ids.length && firstError) {
+    throw firstError;
+  }
+  return buildBatchCreateResult({
+    ids,
+    kind: "lipsync",
+    skippedFiles,
+    warnings
+  });
+}
 async function createLipsyncProjectFromTranslation(options) {
   const folderId = await resolveValidatedProjectFolderId({
     apiBaseUrl: options.apiBaseUrl,
@@ -8001,7 +8299,9 @@ async function createLipsyncProjectFromTranslation(options) {
     kind: "translate_dub"
   });
   const rawProject = asRecord3(projectDetail.project.raw);
-  const title = options.title?.trim() || projectDetail.project.title || "Lip Sync Project";
+  const title = resolveProjectTitle(
+    projectDetail.project.title || "Lip Sync Project"
+  );
   await assertCreateAllowed({
     apiBaseUrl: options.apiBaseUrl,
     items: [
@@ -8026,7 +8326,7 @@ async function createLipsyncProjectFromTranslation(options) {
     apiBaseUrl: options.apiBaseUrl,
     body: compactJsonObject({
       duration: projectDetail.project.duration ?? void 0,
-      faceMode: options.faceMode ?? "single",
+      faceMode: options.faceMode,
       folderID: folderId ?? readString4(rawProject.folderID) ?? readString4(rawProject.folder_id) ?? "",
       lipSyncMode: LIPSYNC_CREATE_MODE,
       title,
@@ -8085,6 +8385,14 @@ function getInstallTargets(target) {
       target: "workbuddy",
       agentRootDir: path5.dirname(skillsDir),
       skillsDir
+    });
+  }
+  if (target === "agents" || target === "all") {
+    const agentRootDir = path5.join(home, ".agents");
+    targets.push({
+      target: "agents",
+      agentRootDir,
+      skillsDir: path5.join(agentRootDir, "skills")
     });
   }
   return targets;
@@ -8202,7 +8510,7 @@ function installBundledSkills(options) {
     }
     if (present.length === 0) {
       throw new Error(
-        "No supported agent directories were found (~/.cursor, ~/.codex, ~/.claude, ~/.workbuddy). Install an agent first, or pass --path <dir> to choose the destination explicitly."
+        "No supported agent directories were found (~/.cursor, ~/.codex, ~/.claude, ~/.workbuddy, ~/.agents). Install an agent first, or pass --path <dir> to choose the destination explicitly."
       );
     }
     targetDirs = present.map((candidate) => candidate.skillsDir);
@@ -8384,6 +8692,21 @@ function registerAuthCommands(program) {
       })
     );
   });
+  auth.command("login-token").description(
+    "Sign in with an existing access token and save a local CLI session"
+  ).requiredOption("--access-token <token>", "Access token from the web app").option(
+    "--refresh-token <token>",
+    "Optional refresh token for session renewal"
+  ).option("--token-type <type>", "Token type", "Bearer").option("--api-base-url <url>", "Override the API base URL").action(async (options) => {
+    printJson(
+      await loginWithAccessToken({
+        accessToken: options.accessToken,
+        apiBaseUrl: options.apiBaseUrl,
+        refreshToken: options.refreshToken,
+        tokenType: options.tokenType
+      })
+    );
+  });
   auth.command("login-worker", { hidden: true }).description("Internal background worker for browser login").option(
     "--callback-path <path>",
     "Override the local callback path",
@@ -8449,10 +8772,6 @@ function registerAuthCommands(program) {
     if (!await printAuthRequiredStatus()) {
       return;
     }
-    await requireUserPermission({
-      action: "view membership details",
-      permissionKeys: [USER_PERMISSIONS.manageSubscription]
-    });
     printMembershipSummary(await getUserMembershipStatus());
   });
 }
@@ -8589,11 +8908,6 @@ function assertSingleSourceOnlyOptions(options) {
   if (options.subtitleFile && !options.fromFile) {
     throw new Error(
       "`--subtitle-file` is only supported with `--from-file`. Remove it, or switch to a single local file source."
-    );
-  }
-  if (options.title && (options.fromFiles?.length || options.fromDir)) {
-    throw new Error(
-      "`--title` is only supported for single-file or URL creates. Remove it for batch creation."
     );
   }
 }
@@ -8802,7 +9116,11 @@ function registerProjectCommands(program) {
   ).option(
     "--proofread-before-dubbing",
     "Run proofreading before dubbing starts"
-  ).option("--prompt <text>", "Optional translation prompt").option(
+  ).option(
+    "--prompt <text>",
+    "Optional translation prompt (max 1000 characters)",
+    parseUserPrompt
+  ).option(
     "--subtitle-file <path>",
     "Optional local subtitle file (.srt / .vtt / .txt) to upload with the video"
   ).option(
@@ -8813,7 +9131,7 @@ function registerProjectCommands(program) {
   ).option(
     "--glossary <ids...>",
     "Glossary ID list, separated by spaces or commas"
-  ).option("--title <title>", "Set the project title").action(async (options, command) => {
+  ).action(async (options, command) => {
     validateTranslationCreateOptions(options);
     if ((options.fromFiles?.length || options.fromDir) && command.getOptionValueSource("speakerNumber") === "cli") {
       throw new Error(
@@ -8857,7 +9175,6 @@ function registerProjectCommands(program) {
         subtitleFilePath: options.subtitleFile,
         subtitleUsage: options.subtitleFile ? options.subtitleUsage : void 0,
         targetLanguage: options.targetLanguage,
-        title: options.title,
         userPrompt: options.prompt
       });
       emitWarnings(result2);
@@ -8912,7 +9229,6 @@ function registerProjectCommands(program) {
       sourceUrl: options.fromUrl,
       speakerNumber: options.speakerNumber,
       targetLanguage: options.targetLanguage,
-      title: options.title,
       userPrompt: options.prompt
     });
     emitWarnings(result);
@@ -8944,7 +9260,11 @@ function registerProjectCommands(program) {
   ).option(
     "--remove-original-subtitle",
     "Remove original subtitle tracks from the output"
-  ).option("--prompt <text>", "Optional translation prompt").option(
+  ).option(
+    "--prompt <text>",
+    "Optional translation prompt (max 1000 characters)",
+    parseUserPrompt
+  ).option(
     "--subtitle-file <path>",
     "Optional local subtitle file (.srt / .vtt / .txt) to upload with the video"
   ).option(
@@ -8955,7 +9275,7 @@ function registerProjectCommands(program) {
   ).option(
     "--glossary <ids...>",
     "Glossary ID list, separated by spaces or commas"
-  ).option("--title <title>", "Set the project title").action(async (options) => {
+  ).action(async (options) => {
     assertSupportedProjectLanguage({
       field: "target-language",
       kind: "translate_subtitles",
@@ -8990,7 +9310,6 @@ function registerProjectCommands(program) {
           subtitleFilePath: options.subtitleFile,
           subtitleUsage: options.subtitleFile ? options.subtitleUsage : void 0,
           targetLanguage: options.targetLanguage,
-          title: options.title,
           userPrompt: options.prompt
         })
       );
@@ -9045,7 +9364,6 @@ function registerProjectCommands(program) {
         sourceUrl: options.fromUrl,
         subtitleDisplayType: options.subtitleDisplay,
         targetLanguage: options.targetLanguage,
-        title: options.title,
         userPrompt: options.prompt
       })
     );
@@ -9071,13 +9389,17 @@ function registerProjectCommands(program) {
     "--original-language <language>",
     "Original language code. `auto` is not supported for visual translate",
     parseRequiredFrameOriginalLanguage
-  ).option("--prompt <text>", "Optional translation prompt").option(
+  ).option(
+    "--prompt <text>",
+    "Optional translation prompt (max 1000 characters)",
+    parseUserPrompt
+  ).option(
     "--glossary <ids...>",
     "Glossary ID list, separated by spaces or commas"
   ).option("--font-family <name>", "Custom font family name for the output").option("--font-src <url>", "Custom font source URL for the output").option(
     "--font-file <path>",
     "Upload a local custom font file (.ttf / .otf); when set, --font-family / --font-src are ignored"
-  ).option("--title <title>", "Set the project title").action(async (options) => {
+  ).action(async (options) => {
     const originalLanguage = options.originalLanguage;
     assertSupportedProjectLanguage({
       field: "target-language",
@@ -9111,7 +9433,6 @@ function registerProjectCommands(program) {
         glossaryIdList,
         originalLanguage,
         targetLanguage: options.targetLanguage,
-        title: options.title,
         userPrompt: options.prompt
       });
       emitWarnings(result2);
@@ -9161,7 +9482,6 @@ function registerProjectCommands(program) {
       originalLanguage,
       sourceUrl: options.fromUrl,
       targetLanguage: options.targetLanguage,
-      title: options.title,
       userPrompt: options.prompt
     });
     emitWarnings(result);
@@ -9173,19 +9493,20 @@ function registerProjectCommands(program) {
     "Artifact type: visual_translation"
   );
   const lipsync = project.command("lipsync").description("Manage lipsync projects");
-  lipsync.command("create").description("Create a lipsync project using audio from the source video").option("--from-translation <id>", "Source translation project ID").option("--from-url <url>", "Source video URL").option("--from-file <path>", "Source local video file").option("--folder <folderId>", "Create inside a folder").option("--title <title>", "Set the project title").option(
+  lipsync.command("create").description("Create a lipsync project using audio from the source video").option("--from-translation <id>", "Source translation project ID").option("--from-url <url>", "Source video URL").option("--from-file <path>", "Source local video file").option("--from-files <paths...>", "Batch source local video files").option("--from-dir <path>", "Batch source local video directory").option("--folder <folderId>", "Create inside a folder").requiredOption(
     "--face-mode <mode>",
-    "Face mode: single or more",
-    parseFaceMode,
-    "single"
+    "Face mode: single or more (required)",
+    parseFaceMode
   ).action(async (options) => {
     if (countDefinedSources([
       options.fromTranslation,
       options.fromUrl,
-      options.fromFile
+      options.fromFile,
+      options.fromFiles,
+      options.fromDir
     ]) !== 1) {
       throw new Error(
-        "Provide exactly one source: `--from-translation <id>`, `--from-url <url>`, or `--from-file <path>`."
+        "Provide exactly one source: `--from-translation <id>`, `--from-url <url>`, `--from-file <path>`, `--from-files <paths...>`, or `--from-dir <path>`."
       );
     }
     if (options.fromTranslation) {
@@ -9193,7 +9514,6 @@ function registerProjectCommands(program) {
         await createLipsyncProjectFromTranslation({
           faceMode: options.faceMode,
           folderId: options.folder,
-          title: options.title,
           translationId: options.fromTranslation
         })
       );
@@ -9204,18 +9524,38 @@ function registerProjectCommands(program) {
         await createLipsyncProjectFromFile({
           faceMode: options.faceMode,
           filePath: options.fromFile,
-          folderId: options.folder,
-          title: options.title
+          folderId: options.folder
         })
       );
+      return;
+    }
+    if (options.fromFiles?.length) {
+      const result = await batchCreateLipsyncProjectsFromFiles({
+        faceMode: options.faceMode,
+        filePaths: options.fromFiles,
+        folderId: options.folder
+      });
+      emitWarnings(result);
+      printJson(result);
+      return;
+    }
+    if (options.fromDir) {
+      const result = await batchCreateLipsyncProjectsFromFiles({
+        faceMode: options.faceMode,
+        filePaths: await resolveDirectorySourceFiles(options.fromDir, [
+          "video"
+        ]),
+        folderId: options.folder
+      });
+      emitWarnings(result);
+      printJson(result);
       return;
     }
     printJson(
       await createLipsyncProjectFromUrl({
         faceMode: options.faceMode,
         folderId: options.folder,
-        sourceUrl: options.fromUrl,
-        title: options.title
+        sourceUrl: options.fromUrl
       })
     );
   });
@@ -9228,11 +9568,11 @@ function registerProjectCommands(program) {
 
 // src/commands/skills.ts
 function parseSkillTarget(value) {
-  if (value === "cursor" || value === "codex" || value === "claude-code" || value === "workbuddy" || value === "all") {
+  if (value === "cursor" || value === "codex" || value === "claude-code" || value === "workbuddy" || value === "agents" || value === "all") {
     return value;
   }
   throw new Error(
-    `Invalid --target "${value}". Use cursor, codex, claude-code, workbuddy, or all.`
+    `Invalid --target "${value}". Use cursor, codex, claude-code, workbuddy, agents, or all.`
   );
 }
 function registerSkillsCommands(program) {
@@ -9246,10 +9586,10 @@ function registerSkillsCommands(program) {
     });
   });
   skills.command("install").description(
-    "Install bundled skills into the skills directories of detected agents (~/.cursor, ~/.codex, ~/.claude, ~/.workbuddy); agents that are not installed are skipped"
+    "Install bundled skills into the skills directories of detected agents (~/.cursor, ~/.codex, ~/.claude, ~/.workbuddy, ~/.agents); agents that are not installed are skipped"
   ).option(
     "--target <target>",
-    "cursor, codex, claude-code, workbuddy, or all",
+    "cursor, codex, claude-code, workbuddy, agents, or all",
     "all"
   ).option("--skill <name>", "Install only one skill; repeatable", collect, []).option(
     "--link",
@@ -9316,9 +9656,16 @@ export {
   formatCliVersionForApiHeader,
   CLI_VERSION_API_HEADER,
   resolveUpgradeRepoUrl,
+  noteCliUpgradeSuggestion,
+  attachCliUpgradeSuggestion,
+  resetCliUpgradeSuggestState,
   printJson,
   printStderr,
+  buildNetworkRequestError,
   CliApiError,
+  CliUpgradeRequiredError,
+  CliNetworkError,
+  buildCliCommandErrorPayload,
   setCliClientRegion,
   clearCliClientRegion,
   getCliClientRegion,
@@ -9330,7 +9677,6 @@ export {
   resolveCliUpgradeHint,
   buildCliUpgradeRequiredError,
   warnCliUpgradeIfSuggested,
-  resetCliUpgradeSuggestState,
   handleCliUpgradeHeaders,
   assertNoCliUpgradeRequired,
   getSessionFilePath,
@@ -9338,15 +9684,19 @@ export {
   writeStoredSession,
   clearStoredSession,
   createDeviceId,
+  createAuthCallbackListener,
   loginWithEmail,
   requestEmailLoginCode,
   completeEmailLogin,
+  loginWithAccessToken,
   loginWithBrowser,
   waitForAuthenticatedSession,
   startBrowserLoginInBackground,
   getAuthStatus,
   logout,
   FILE_SIZE_LIMIT_BYTES,
+  BATCH_CREATE_MAX_FILES,
+  assertBatchFileCountAllowed,
   DEFAULT_VIDEO_RESOLUTION_LIMIT,
   LIPSYNC_1080P_PIXEL_LIMIT,
   LIPSYNC_DURATION_4K_MAX_SECONDS,
@@ -9358,6 +9708,9 @@ export {
   normalizeMembershipUserType,
   deriveMembershipFlags,
   tierMaxUploadSeconds,
+  MAX_USER_PROMPT_LENGTH,
+  assertUserPromptLength,
+  parseUserPrompt,
   assertMembershipForCreateOptions,
   parseSpeakerNumber,
   parseDubPreference,
@@ -9395,6 +9748,11 @@ export {
   parseVisualTranslateFontOptions,
   materializeVisualTranslateFont,
   getVisualTranslateFonts,
+  resolveOriginalLanguageLabel,
+  resolveTargetLanguageLabel,
+  resolveTargetLocaleLabel,
+  resolveLanguageCapabilityLabel,
+  enrichProjectLanguageLabels,
   getProjectLanguageCapabilities,
   assertSupportedProjectLanguage,
   requireProjectLanguage,
@@ -9404,6 +9762,9 @@ export {
   assertCaptionDurationQuotaAllowed,
   evaluatePointsAllowanceForCreate,
   assertCreateAllowed,
+  MAX_PROJECT_TITLE_LENGTH,
+  truncateProjectTitle,
+  resolveProjectTitle,
   SUBTITLE_FILE_SIZE_LIMIT_BYTES,
   validateSubtitleFileContent,
   assertSubtitleFileForTranslation,
@@ -9432,6 +9793,7 @@ export {
   isProjectCurrentlyExporting,
   isExportBlockedFailedStatus,
   assertProjectNotFailedForArtifactAccess,
+  assertProjectNotAwaitingProofreadingForDownload,
   assertProjectNotCurrentlyExporting,
   generateSubtitleContent,
   isSubtitleArtifact,
@@ -9439,10 +9801,6 @@ export {
   extractSubtitleSections,
   inferSubtitleOutputPath,
   buildSubtitleFileName,
-  resolveOriginalLanguageLabel,
-  resolveTargetLanguageLabel,
-  resolveTargetLocaleLabel,
-  enrichProjectLanguageLabels,
   buildProjectWebUrl,
   buildProjectOpenUrl,
   resolveProjectArtifactType,
@@ -9453,6 +9811,7 @@ export {
   shouldFallbackToAudioTranslationDetail,
   parseProjectKind,
   resolveProjectListNextCursor,
+  buildCliProjectListPage,
   listProjects,
   getProject,
   exportProject,
@@ -9479,6 +9838,7 @@ export {
   batchCreateFrameTranslationProjectsFromFiles,
   createLipsyncProjectFromUrl,
   createLipsyncProjectFromFile,
+  batchCreateLipsyncProjectsFromFiles,
   createLipsyncProjectFromTranslation,
   resolveWorkbuddySkillsDir,
   getBundledSkillsDir,
@@ -9486,4 +9846,4 @@ export {
   installBundledSkills,
   buildCli
 };
-//# sourceMappingURL=chunk-QJKJESXQ.mjs.map
+//# sourceMappingURL=chunk-3OP5HOYE.mjs.map
