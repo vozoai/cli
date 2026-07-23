@@ -122,6 +122,7 @@ import {
   isExportBlockedProcessingStatus,
   isProjectCurrentlyExporting,
   isProjectNotFoundError,
+  isRenderedWatermarkSame,
   isSubtitleArtifact,
   isSubtitleSegmentProcessingStatus,
   isTeamAccessSuspended,
@@ -191,7 +192,7 @@ import {
   waitForAuthenticatedSession,
   warnCliUpgradeIfSuggested,
   writeStoredSession
-} from "./chunk-3OP5HOYE.mjs";
+} from "./chunk-M3RNAKXV.mjs";
 export {
   BATCH_CREATE_MAX_FILES,
   BLOCK_PROCESSING_STATUSES,
@@ -315,6 +316,7 @@ export {
   isExportBlockedProcessingStatus,
   isProjectCurrentlyExporting,
   isProjectNotFoundError,
+  isRenderedWatermarkSame,
   isSubtitleArtifact,
   isSubtitleSegmentProcessingStatus,
   isTeamAccessSuspended,

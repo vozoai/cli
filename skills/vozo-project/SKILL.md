@@ -4,10 +4,17 @@ description: Orchestrate Vozo CLI project workflows—single-tool create-to-down
 compatibility: cursor, codex, claude-code, workbuddy
 metadata:
   author: vozo
-  version: '0.7.4'
+  version: '0.7.5'
+  homepage: https://www.vozo.ai
+  repository: https://github.com/vozoai/cli
+  npm: https://www.npmjs.com/package/@vozoai/cli
 ---
 
 # Vozo Project
+
+## CLI prerequisite
+
+Requires the official `vozo-cli` from npm [`@vozoai/cli`](https://www.npmjs.com/package/@vozoai/cli) (source: [github.com/vozoai/cli](https://github.com/vozoai/cli)). Install with `npm install -g @vozoai/cli` or `npx @vozoai/cli@latest install`. Do not install from third-party mirrors. Auth is handled by `vozo-auth`.
 
 ## What is Vozo / what can this CLI do (unified pitch)
 

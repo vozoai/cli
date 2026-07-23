@@ -31,7 +31,7 @@ var import_node_stream = require("stream");
 var import_promises2 = require("stream/promises");
 
 // src/core/config.ts
-var CLI_VERSION = "0.0.3";
+var CLI_VERSION = "0.0.4";
 function formatCliVersionForApiHeader(version) {
   const withoutPrefix = version.trim().replace(/^v/i, "");
   const coreMatch = withoutPrefix.match(/^(\d+\.\d+\.\d+)/);
@@ -2876,6 +2876,7 @@ async function runCliUpgrade(options) {
 var DEFAULT_NPM_PACKAGE = "@vozoai/cli";
 var DEFAULT_GITHUB_REPO = "vozoai/cli";
 var DEFAULT_SKILLS_GITHUB = "vozoai/cli";
+var SKILLS_GLOBAL_AGENTS = ["cursor", "codex", "claude-code"];
 function runCommand2(command, args, captureOutput = false) {
   return (0, import_node_child_process4.spawnSync)(command, args, {
     encoding: "utf8",
@@ -2899,18 +2900,28 @@ function resolveInstallSpec(options) {
   const ref = options?.ref?.trim();
   return ref ? `${packageName}@${ref}` : packageName;
 }
-function installSkillsFromGithub() {
-  printStderr(
-    `Installing agent skills from GitHub via \`npx skills add ${DEFAULT_SKILLS_GITHUB} -g -y\` ...`
-  );
-  const result = runCommand2("npx", [
+function buildSkillsAddArgs() {
+  return [
     "--yes",
     "skills",
     "add",
     DEFAULT_SKILLS_GITHUB,
     "-g",
-    "-y"
-  ]);
+    "-y",
+    "-a",
+    ...SKILLS_GLOBAL_AGENTS
+  ];
+}
+function formatSkillsAddCommand() {
+  return `npx skills add ${DEFAULT_SKILLS_GITHUB} -g -y -a ${SKILLS_GLOBAL_AGENTS.join(
+    " "
+  )}`;
+}
+function installSkillsFromGithub() {
+  printStderr(
+    `Installing agent skills from GitHub via \`${formatSkillsAddCommand()}\` ...`
+  );
+  const result = runCommand2("npx", buildSkillsAddArgs());
   return result.status === 0;
 }
 function installSkillsFromBundledPackage() {
@@ -2954,7 +2965,7 @@ async function runCliInstall(options) {
       skills = "failed";
       skillsMethod = "skills_cli";
       printStderr(
-        `Warning: skills install failed. Run \`npx skills add ${DEFAULT_SKILLS_GITHUB} -g -y\` or \`vozo-cli skills install\` manually.`
+        `Warning: skills install failed. Run \`${formatSkillsAddCommand()}\` or \`vozo-cli skills install\` manually.`
       );
     }
   }
@@ -6380,6 +6391,7 @@ async function uploadSubtitleFileForTranslation(options) {
     apiBaseUrl: options.apiBaseUrl,
     bucketName: options.bucketName,
     filePath: options.subtitleFilePath,
+    region: options.createInfo.userRegion ?? options.createInfo.user_region ?? void 0,
     uploadPath
   });
   return uploadPath;
@@ -6616,7 +6628,7 @@ function resolveExportArtifactForKind(kind, artifactInput) {
   }
   return defaultArtifact;
 }
-function buildExportRequestBody(kind, artifact, rawProject) {
+function buildExportRequestBody(kind, artifact, rawProject, options) {
   if (kind === "translate_dub" || kind === "audio-translation") {
     const raw = asRecord3(rawProject);
     const enableSubtitles = Boolean(
@@ -6624,7 +6636,10 @@ function buildExportRequestBody(kind, artifact, rawProject) {
     );
     return compactJsonObject({
       exportType: artifact,
-      isSubtitleAdded: enableSubtitles
+      isSubtitleAdded: enableSubtitles,
+      // Web only sends this for translated video (`dubbed_video`), from
+      // `featureConfigs.exportWithWatermark`.
+      ...artifact === "dubbed_video" ? { renderWithWatermark: Boolean(options?.renderWithWatermark) } : {}
     });
   }
   if (kind === "lipsync" || kind === "talking-photo") {
@@ -6637,6 +6652,16 @@ function buildExportRequestBody(kind, artifact, rawProject) {
     });
   }
   return {};
+}
+function isRenderedWatermarkSame(rawProject, showWatermark) {
+  const renderedVideo = asRecord3(
+    asRecord3(rawProject).renderedVideo ?? asRecord3(rawProject).rendered_video
+  );
+  const value = renderedVideo.renderWithWatermark ?? renderedVideo.render_with_watermark;
+  if (typeof value !== "boolean") {
+    return true;
+  }
+  return value === showWatermark;
 }
 var PROJECT_NOT_FOUND_MESSAGE = "Project not found.";
 function extractApiErrorInfo(error) {
@@ -6809,9 +6834,11 @@ async function prepareUploadForProject(options) {
   });
   const uploadDir = response.data.uploadDir ?? response.data.upload_dir ?? "";
   const uploadBucket = response.data.uploadBucket ?? response.data.upload_bucket ?? "";
+  const userRegion = response.data.userRegion ?? response.data.user_region ?? "";
   return {
     uploadBucket,
-    uploadDir
+    uploadDir,
+    userRegion
   };
 }
 function parseProjectKind(kind) {
@@ -6945,33 +6972,38 @@ async function exportProject(options) {
     kind: resolvedKind,
     project: projectDetail.project
   });
+  let renderWithWatermark;
+  if (resolvedKind === "translate_dub" && artifact === "dubbed_video") {
+    const features = await getUserFeatureConfig(options.apiBaseUrl);
+    renderWithWatermark = Boolean(features.exportWithWatermark);
+  }
   const existingDownloadUrl = resolveArtifactSourceUrl(
     resolvedKind,
     artifact,
     projectDetail.project.raw
   );
-  if (existingDownloadUrl) {
+  const canReuseExistingExport = Boolean(existingDownloadUrl) && (artifact !== "dubbed_video" || renderWithWatermark === void 0 || isRenderedWatermarkSame(projectDetail.project.raw, renderWithWatermark));
+  if (canReuseExistingExport && existingDownloadUrl) {
     return {
       artifact,
       downloadUrl: existingDownloadUrl,
-      estimatedDuration: null,
       id: options.id,
       kind: resolvedKind,
       project: projectDetail.project,
       status: "already_exported"
     };
   }
-  const response = await authorizedRequest2({
+  await authorizedRequest2({
     apiBaseUrl: options.apiBaseUrl,
     body: buildExportRequestBody(
       resolvedKind,
       artifact,
-      projectDetail.project.raw
+      projectDetail.project.raw,
+      { renderWithWatermark }
     ),
     method: "POST",
     path: `${DETAIL_KIND_TO_PATH[resolvedKind]}/${options.id}/exports`
   });
-  const estimatedDuration = response.data.estimatedDuration ?? response.data.estimated_duration ?? null;
   const refreshedProject = await getProject({
     apiBaseUrl: options.apiBaseUrl,
     id: options.id,
@@ -6980,7 +7012,6 @@ async function exportProject(options) {
   return {
     artifact,
     downloadUrl: null,
-    estimatedDuration,
     id: options.id,
     kind: resolvedKind,
     project: refreshedProject.project,
@@ -7627,6 +7658,7 @@ async function createTranslationProjectFromFile(options) {
   });
   const bucketName = createResponse.data.uploadBucket ?? createResponse.data.upload_bucket;
   const uploadPath = createResponse.data.uploadPath ?? createResponse.data.upload_path;
+  const userRegion = createResponse.data.userRegion ?? createResponse.data.user_region;
   if (!bucketName || !uploadPath) {
     throw new Error(
       "The create API response did not include an upload bucket/path for the media file."
@@ -7636,6 +7668,7 @@ async function createTranslationProjectFromFile(options) {
     apiBaseUrl: options.apiBaseUrl,
     bucketName,
     filePath: options.filePath,
+    region: userRegion ?? void 0,
     uploadPath
   });
   let uploadedSubtitlePath = "";
@@ -7887,6 +7920,7 @@ async function createCaptionProjectFromFile(options) {
     apiBaseUrl: session.apiBaseUrl,
     bucketName: preparedUpload.uploadBucket,
     filePath: options.filePath,
+    region: preparedUpload.userRegion || void 0,
     uploadPath: uploadVideoPath
   });
   let uploadedSubtitlePath = "";
@@ -7901,6 +7935,7 @@ async function createCaptionProjectFromFile(options) {
       apiBaseUrl: session.apiBaseUrl,
       bucketName: preparedUpload.uploadBucket,
       filePath: options.subtitleFilePath,
+      region: preparedUpload.userRegion || void 0,
       uploadPath: uploadedSubtitlePath
     });
     subtitleUseAsOriginal = (options.subtitleUsage ?? "original") === "original";
@@ -8164,6 +8199,7 @@ async function createFrameTranslationProjectFromFile(options) {
     apiBaseUrl: session.apiBaseUrl,
     bucketName: preparedUpload.uploadBucket,
     filePath: options.filePath,
+    region: preparedUpload.userRegion || void 0,
     uploadPath: uploadVideoPath
   });
   const response = await authorizedRequest2({
@@ -8378,10 +8414,12 @@ async function createLipsyncProjectFromFile(options) {
       "Lipsync create response did not include an upload bucket."
     );
   }
+  const userRegion = createResponse.data.userRegion ?? createResponse.data.user_region;
   await uploadSingleLocalFile({
     apiBaseUrl: options.apiBaseUrl,
     bucketName: uploadBucket,
     filePath: options.filePath,
+    region: userRegion ?? void 0,
     uploadPath: uploadVideoPath
   });
   await authorizedRequest2({
@@ -8691,9 +8729,14 @@ function parseLanguageToolKind(kind) {
   return parsed;
 }
 function registerToolDetailCommands(tool, kind, downloadArtifactHelp, exportArtifactHelp) {
-  tool.command("get <id>").description("Get a single project").action(async (id) => {
+  tool.command("get <id>").description("Get a single project").option(
+    "--raw",
+    "Include the original backend project payload under `project.raw`"
+  ).action(async (id, options) => {
     const detail = await getProject({ id, kind });
-    printJson({ project: omitProjectRaw(detail.project) });
+    printJson({
+      project: options.raw ? detail.project : omitProjectRaw(detail.project)
+    });
   });
   tool.command("open <id>").description("Return a project preview URL").action(async (id) => {
     printJson(await openProject({ id, kind }));

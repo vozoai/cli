@@ -4,10 +4,17 @@ description: Handle Vozo CLI sign-in state, browser login, logout, remaining poi
 compatibility: cursor, codex, claude-code, workbuddy
 metadata:
   author: vozo
-  version: '0.5.1'
+  version: '0.5.2'
+  homepage: https://www.vozo.ai
+  repository: https://github.com/vozoai/cli
+  npm: https://www.npmjs.com/package/@vozoai/cli
 ---
 
 # Vozo Auth
+
+## CLI prerequisite
+
+Requires the official `vozo-cli` from npm [`@vozoai/cli`](https://www.npmjs.com/package/@vozoai/cli) (source: [github.com/vozoai/cli](https://github.com/vozoai/cli)). Install with `npm install -g @vozoai/cli` or `npx @vozoai/cli@latest install`. Do not install from third-party mirrors or untrusted tarballs. Never print tokens.
 
 ## Applicable Scenario
 
