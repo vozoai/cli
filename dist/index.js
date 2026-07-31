@@ -125,6 +125,7 @@ __export(src_exports, {
   getBundledSkillsDir: () => getBundledSkillsDir,
   getCliClientRegion: () => getCliClientRegion,
   getLatestLipsyncVariant: () => getLatestLipsyncVariant,
+  getOpenBrowserSpawnSpec: () => getOpenBrowserSpawnSpec,
   getProject: () => getProject,
   getProjectLanguageCapabilities: () => getProjectLanguageCapabilities,
   getSessionFilePath: () => getSessionFilePath,
@@ -170,6 +171,7 @@ __export(src_exports, {
   normalizePermissionMap: () => normalizePermissionMap,
   normalizeProjectStatus: () => normalizeProjectStatus,
   noteCliUpgradeSuggestion: () => noteCliUpgradeSuggestion,
+  openBrowser: () => openBrowser,
   openProject: () => openProject,
   parseDubPreference: () => parseDubPreference,
   parseFaceMode: () => parseFaceMode,
@@ -241,7 +243,7 @@ var import_node_stream = require("stream");
 var import_promises2 = require("stream/promises");
 
 // src/core/config.ts
-var CLI_VERSION = "1.0.0";
+var CLI_VERSION = "1.0.1";
 function formatCliVersionForApiHeader(version) {
   const withoutPrefix = version.trim().replace(/^v/i, "");
   const coreMatch = withoutPrefix.match(/^(\d+\.\d+\.\d+)/);
@@ -1161,14 +1163,36 @@ async function waitForLoginPendingFile(options) {
 
 // src/core/browser.ts
 var import_node_child_process = require("child_process");
+function getOpenBrowserSpawnSpec(url, platform = process.platform) {
+  if (platform === "darwin") {
+    return {
+      command: "open",
+      args: [url],
+      options: {}
+    };
+  }
+  if (platform === "win32") {
+    return {
+      command: "cmd",
+      args: ["/s", "/c", `start "" "${url}"`],
+      options: {
+        windowsVerbatimArguments: true
+      }
+    };
+  }
+  return {
+    command: "xdg-open",
+    args: [url],
+    options: {}
+  };
+}
 async function openBrowser(url) {
-  const platform = process.platform;
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
-  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+  const { args, command, options } = getOpenBrowserSpawnSpec(url);
   await new Promise((resolve, reject) => {
     const child = (0, import_node_child_process.spawn)(command, args, {
       detached: true,
-      stdio: "ignore"
+      stdio: "ignore",
+      ...options
     });
     child.on("error", reject);
     child.on("spawn", () => {
@@ -10015,6 +10039,7 @@ function buildCli() {
   getBundledSkillsDir,
   getCliClientRegion,
   getLatestLipsyncVariant,
+  getOpenBrowserSpawnSpec,
   getProject,
   getProjectLanguageCapabilities,
   getSessionFilePath,
@@ -10060,6 +10085,7 @@ function buildCli() {
   normalizePermissionMap,
   normalizeProjectStatus,
   noteCliUpgradeSuggestion,
+  openBrowser,
   openProject,
   parseDubPreference,
   parseFaceMode,

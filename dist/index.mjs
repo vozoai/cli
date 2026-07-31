@@ -94,6 +94,7 @@ import {
   getBundledSkillsDir,
   getCliClientRegion,
   getLatestLipsyncVariant,
+  getOpenBrowserSpawnSpec,
   getProject,
   getProjectLanguageCapabilities,
   getSessionFilePath,
@@ -139,6 +140,7 @@ import {
   normalizePermissionMap,
   normalizeProjectStatus,
   noteCliUpgradeSuggestion,
+  openBrowser,
   openProject,
   parseDubPreference,
   parseFaceMode,
@@ -192,7 +194,7 @@ import {
   waitForAuthenticatedSession,
   warnCliUpgradeIfSuggested,
   writeStoredSession
-} from "./chunk-UMNF6U3Y.mjs";
+} from "./chunk-IQROZLGG.mjs";
 export {
   BATCH_CREATE_MAX_FILES,
   BLOCK_PROCESSING_STATUSES,
@@ -288,6 +290,7 @@ export {
   getBundledSkillsDir,
   getCliClientRegion,
   getLatestLipsyncVariant,
+  getOpenBrowserSpawnSpec,
   getProject,
   getProjectLanguageCapabilities,
   getSessionFilePath,
@@ -333,6 +336,7 @@ export {
   normalizePermissionMap,
   normalizeProjectStatus,
   noteCliUpgradeSuggestion,
+  openBrowser,
   openProject,
   parseDubPreference,
   parseFaceMode,

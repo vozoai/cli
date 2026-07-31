@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/core/config.ts
-var CLI_VERSION = "1.0.0";
+var CLI_VERSION = "1.0.1";
 function formatCliVersionForApiHeader(version) {
   const withoutPrefix = version.trim().replace(/^v/i, "");
   const coreMatch = withoutPrefix.match(/^(\d+\.\d+\.\d+)/);
@@ -858,6 +858,47 @@ function createDeviceId() {
   return randomUUID2();
 }
 
+// src/core/browser.ts
+import { spawn } from "node:child_process";
+function getOpenBrowserSpawnSpec(url, platform = process.platform) {
+  if (platform === "darwin") {
+    return {
+      command: "open",
+      args: [url],
+      options: {}
+    };
+  }
+  if (platform === "win32") {
+    return {
+      command: "cmd",
+      args: ["/s", "/c", `start "" "${url}"`],
+      options: {
+        windowsVerbatimArguments: true
+      }
+    };
+  }
+  return {
+    command: "xdg-open",
+    args: [url],
+    options: {}
+  };
+}
+async function openBrowser(url) {
+  const { args, command, options } = getOpenBrowserSpawnSpec(url);
+  await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: "ignore",
+      ...options
+    });
+    child.on("error", reject);
+    child.on("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
+
 // src/core/callback.ts
 import { createServer } from "node:http";
 var LAUNCH_PATH = "/__vozo_cli_launch";
@@ -1217,25 +1258,6 @@ async function waitForLoginPendingFile(options) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   return null;
-}
-
-// src/core/browser.ts
-import { spawn } from "node:child_process";
-async function openBrowser(url) {
-  const platform = process.platform;
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
-  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
-  await new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      detached: true,
-      stdio: "ignore"
-    });
-    child.on("error", reject);
-    child.on("spawn", () => {
-      child.unref();
-      resolve();
-    });
-  });
 }
 
 // src/core/auth.ts
@@ -9727,6 +9749,8 @@ export {
   writeStoredSession,
   clearStoredSession,
   createDeviceId,
+  getOpenBrowserSpawnSpec,
+  openBrowser,
   createAuthCallbackListener,
   loginWithEmail,
   requestEmailLoginCode,
@@ -9890,4 +9914,4 @@ export {
   installBundledSkills,
   buildCli
 };
-//# sourceMappingURL=chunk-UMNF6U3Y.mjs.map
+//# sourceMappingURL=chunk-IQROZLGG.mjs.map
