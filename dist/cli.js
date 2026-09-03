@@ -31,7 +31,7 @@ var import_node_stream = require("stream");
 var import_promises2 = require("stream/promises");
 
 // src/core/config.ts
-var CLI_VERSION = "1.0.1";
+var CLI_VERSION = "1.0.2";
 function formatCliVersionForApiHeader(version) {
   const withoutPrefix = version.trim().replace(/^v/i, "");
   const coreMatch = withoutPrefix.match(/^(\d+\.\d+\.\d+)/);
@@ -935,36 +935,14 @@ async function waitForLoginPendingFile(options) {
 
 // src/core/browser.ts
 var import_node_child_process = require("child_process");
-function getOpenBrowserSpawnSpec(url, platform = process.platform) {
-  if (platform === "darwin") {
-    return {
-      command: "open",
-      args: [url],
-      options: {}
-    };
-  }
-  if (platform === "win32") {
-    return {
-      command: "cmd",
-      args: ["/s", "/c", `start "" "${url}"`],
-      options: {
-        windowsVerbatimArguments: true
-      }
-    };
-  }
-  return {
-    command: "xdg-open",
-    args: [url],
-    options: {}
-  };
-}
 async function openBrowser(url) {
-  const { args, command, options } = getOpenBrowserSpawnSpec(url);
+  const platform = process.platform;
+  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
+  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
   await new Promise((resolve, reject) => {
     const child = (0, import_node_child_process.spawn)(command, args, {
       detached: true,
-      stdio: "ignore",
-      ...options
+      stdio: "ignore"
     });
     child.on("error", reject);
     child.on("spawn", () => {
@@ -2005,7 +1983,7 @@ var FILE_SIZE_LIMIT_BYTES = {
   lipsync: 2.5 * GB,
   translate_subtitles: 2.5 * GB,
   visual_translate: 2 * GB,
-  translate_dub: 2.5 * GB
+  translate_dub: 4.5 * GB
 };
 var BATCH_CREATE_MAX_FILES = 40;
 function assertBatchFileCountAllowed(filePaths) {
@@ -7630,9 +7608,9 @@ async function createTranslationProjectFromFile(options) {
     );
   }
   const isAudio = mediaType === "audio";
-  if (isAudio && (options.enableSubtitles || options.removeOriginalSubtitle || options.autoAlignVideo || options.subtitleFilePath)) {
+  if (isAudio && (options.enableSubtitles || options.removeOriginalSubtitle || options.autoAlignVideo)) {
     throw new Error(
-      "Subtitle and video-alignment options apply only to video sources. Omit --enable-subtitles, --remove-original-subtitle, --auto-align-video, and --subtitle-file when uploading audio."
+      "Subtitle-output and video-alignment options apply only to video sources. Omit --enable-subtitles, --remove-original-subtitle, and --auto-align-video when uploading audio."
     );
   }
   const duration = await getLocalMediaDuration(options.filePath);
@@ -8897,7 +8875,7 @@ function registerProjectCommands(program) {
     parseUserPrompt
   ).option(
     "--subtitle-file <path>",
-    "Optional local subtitle file (.srt / .vtt / .txt) to upload with the video"
+    "Optional local subtitle file (.srt / .vtt / .txt) to upload with the source media"
   ).option(
     "--subtitle-usage <mode>",
     "How to use --subtitle-file: original (source script) or translated (final script)",
