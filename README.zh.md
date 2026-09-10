@@ -182,11 +182,11 @@ Point buckets:
 
 各产品工具使用 `project <kind> …`，`<kind>` 如下：
 
-| 产品                | Kind                  | 常见创建来源                                                               |
-| ------------------- | --------------------- | -------------------------------------------------------------------------- |
-| Translate & Dub     | `translate_dub`       | `--from-file` / `--from-files` / `--from-dir` / `--from-url`（视频或音频） |
-| Translate Subtitles | `translate_subtitles` | 同上（仅视频）                                                             |
-| Visual Translate    | `visual_translate`    | 同上（仅视频；必须指定原始语言）                                           |
+| 产品                | Kind                  | 常见创建来源                                                                        |
+| ------------------- | --------------------- | ----------------------------------------------------------------------------------- |
+| Translate & Dub     | `translate_dub`       | `--from-file` / `--from-files` / `--from-dir` / `--from-url`（视频或音频）          |
+| Translate Subtitles | `translate_subtitles` | 同上（仅视频）                                                                      |
+| Visual Translate    | `visual_translate`    | 同上（仅视频；必须指定原始语言）                                                    |
 | Lip Sync            | `lipsync`             | `--from-file` / `--from-files` / `--from-dir` / `--from-url` / `--from-translation` |
 
 每种 kind 均支持：
@@ -212,6 +212,37 @@ vozo-cli project translate_dub download <project-id> --artifact dubbed_video --o
 vozo-cli project translate_dub download <project-id> --artifact background_audio --output ./bgm.wav
 vozo-cli project translate_subtitles download <project-id> --artifact original_subtitle_vtt --output ./original
 ```
+
+### 将已有项目翻译到更多语言
+
+Translate & Dub 可以基于已经编辑好的项目创建更多目标语言项目，不需要重新上传原始媒体：
+
+```bash
+vozo-cli project translate_dub more-languages <project-id> \
+  --target-language de fr \
+  --prompt "产品名保留英文" \
+  --glossary <glossary-id-1> <glossary-id-2> \
+  --auto-align-video \
+  --proofread-before-dubbing \
+  --estimate-only
+```
+
+不传 `--prompt` / `--glossary` 时继承源项目设置；使用 `--clear-prompt` /
+`--clear-glossary` 可清空对应设置。先使用 `--estimate-only`，把接口返回的
+`point` 告知用户；用户确认后，再去掉 `--estimate-only` 执行同一条命令。
+项目资格和状态会在真正执行翻译时校验，因此执行请求仍可能返回错误。不传时会继承源
+项目的变速设置。两步翻译默认关闭，只有用户明确指定
+`--proofread-before-dubbing` 时才开启；可使用 `--auto-align-video` 明确开启变速。
+
+该命令当前**仅支持 Translate & Dub 项目**。如果命令返回
+`Project not found.`，请使用
+`vozo-cli project search "<project-id>" --kind all` 搜索同一个项目 ID。
+如果精确匹配的项目属于其他 kind（或搜索结果提示省略了不支持的 kind），应告知
+用户：项目存在，但其项目类型不支持 More Languages。如果没有找到匹配项目，则继续
+按项目不存在处理，不要自行推断项目类型。
+
+每次 More Languages 请求最多可选择 **40 个目标语言**。如果超过 40 个，请先减少
+选择数量或拆分成多次请求，再执行积分预估或翻译。
 
 ## 进阶用法
 
@@ -290,12 +321,12 @@ vozo-cli project visual_translate create \
 
 ## 命令
 
-| 命令      | 说明                                              |
-| --------- | ------------------------------------------------- |
-| `install` | 一键安装 CLI + skills（配合 `npx … install`）     |
-| `auth`    | 见 [认证](#认证)                                  |
-| `project` | 见 [项目](#项目)                                  |
-| `skills`  | 见 [Agent Skills](#agent-skills)                  |
+| 命令      | 说明                                          |
+| --------- | --------------------------------------------- |
+| `install` | 一键安装 CLI + skills（配合 `npx … install`） |
+| `auth`    | 见 [认证](#认证)                              |
+| `project` | 见 [项目](#项目)                              |
+| `skills`  | 见 [Agent Skills](#agent-skills)              |
 
 ## License
 

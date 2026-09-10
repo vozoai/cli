@@ -216,6 +216,7 @@ declare class CliNetworkError extends Error {
     });
 }
 interface CliCommandErrorPayload {
+    code?: number;
     currentVersion?: string;
     errorKind?: 'network';
     message: string;
@@ -918,6 +919,38 @@ interface CliCreateTranslationProjectResult {
     } | null;
     warnings?: string[];
 }
+interface CliTranslateMoreLanguagesTarget {
+    /** Canonical CLI value, including locale when selected (e.g. `en-AU`). */
+    value: string;
+    language: string;
+    /** Empty when the target uses the language's default locale. */
+    locale: string;
+}
+interface CliTranslateMoreLanguagesSettings {
+    autoAlignVideo: boolean;
+    folderId: string;
+    glossaryIdList: string[];
+    promptType: string;
+    proofreadBeforeDubbing: boolean;
+    userPrompt: string;
+}
+interface CliTranslateMoreLanguagesEstimateResult {
+    sourceId: string;
+    sourceKind: 'audio-translation' | 'translate_dub';
+    status: 'estimated';
+    point: number;
+    targets: CliTranslateMoreLanguagesTarget[];
+    settings: CliTranslateMoreLanguagesSettings;
+}
+interface CliTranslateMoreLanguagesResult {
+    sourceId: string;
+    sourceKind: 'audio-translation' | 'translate_dub';
+    status: 'started';
+    targets: CliTranslateMoreLanguagesTarget[];
+    settings: CliTranslateMoreLanguagesSettings;
+    /** Backend acknowledgement, retained for forward compatibility. */
+    result: unknown;
+}
 interface CliCreateCaptionProjectResult {
     id: string;
     kind: 'translate_subtitles';
@@ -1167,6 +1200,32 @@ declare function getProject(options: {
     id: string;
     kind: DetailKind;
 }): Promise<CliProjectDetailResult>;
+declare const TRANSLATE_MORE_LANGUAGES_MAX_TARGETS = 40;
+declare function resolveTranslateMoreLanguagesTargets(values: string[]): CliTranslateMoreLanguagesTarget[];
+declare function resolveTranslateMoreLanguagesApiErrorMessage(code: number | undefined): string | null;
+declare function estimateTranslateProjectToMoreLanguagesPoints(options: {
+    apiBaseUrl?: string;
+    autoAlignVideo?: boolean;
+    glossaryIdList?: string[];
+    id: string;
+    proofreadBeforeDubbing?: boolean;
+    targetLanguages: string[];
+    userPrompt?: string;
+}): Promise<CliTranslateMoreLanguagesEstimateResult>;
+/**
+ * Create child Translate & Dub projects from an existing translated project.
+ * Omitted prompt/glossary options inherit the source project, matching the web
+ * More Languages dialog; explicit empty values clear them.
+ */
+declare function translateProjectToMoreLanguages(options: {
+    apiBaseUrl?: string;
+    autoAlignVideo?: boolean;
+    glossaryIdList?: string[];
+    id: string;
+    proofreadBeforeDubbing?: boolean;
+    targetLanguages: string[];
+    userPrompt?: string;
+}): Promise<CliTranslateMoreLanguagesResult>;
 declare function exportProject(options: {
     apiBaseUrl?: string;
     artifact?: string;
@@ -1433,4 +1492,4 @@ declare function resolveProjectErrorInfo(errorCode: string | null | undefined): 
 
 declare function buildCli(): Command;
 
-export { type AuthLoginChallenge, type AuthLoginOptions, type AuthLoginResult, type AuthStatusResult, BATCH_CREATE_MAX_FILES, BLOCK_PROCESSING_STATUSES, type BrowserLoginOptions, type BrowserLoginResult, CALLOUT_TEXT_EXPORT_BLOCKED_STATUSES, CLI_VERSION, CLI_VERSION_API_HEADER, CliApiError, type CliBatchCreateProjectResult, type CliCommandErrorPayload, type CliCreateCaptionProjectResult, type CliCreateFrameTranslationProjectResult, type CliCreateLipsyncProjectResult, type CliCreateTranslationProjectResult, type CliFeatureConfigResult, type CliMembershipPointItem, type CliMembershipResult, type CliMembershipStatusResult, CliNetworkError, type CliNetworkErrorDetails, type CliPointsStatusResult, type CliProjectArtifactDownloadResult, type CliProjectArtifactType, type CliProjectDeleteResult, type CliProjectDetailResult, type CliProjectExportResult, type CliProjectFolderCreateResult, type CliProjectFolderListResult, type CliProjectFolderSummary, type CliProjectKind, type CliProjectLanguageCapabilitiesResult, type CliProjectLanguageFieldCapabilities, type CliProjectListResult, type CliProjectOpenResult, type CliProjectResolvedKind, type CliProjectSummary, CliUpgradeRequiredError, type CliUpgradeSuggestion, type CliUserProfile, type CliUserProfileResult, type CliUserSummaryResult, DEFAULT_VIDEO_RESOLUTION_LIMIT, DURATION_HARD_LIMIT_SECONDS, EXPORT_BLOCKED_PROCESSING_STATUSES, FILE_SIZE_LIMIT_BYTES, FONT_FILE_SIZE_LIMIT_BYTES, LIPSYNC_1080P_PIXEL_LIMIT, LIPSYNC_DURATION_4K_MAX_SECONDS, LIPSYNC_PROCESSING_STATUSES, type LogoutResult, MAX_PROJECT_TITLE_LENGTH, MAX_USER_PROMPT_LENGTH, PROJECT_NOT_FOUND_MESSAGE, type ProjectErrorInfo, SUBTITLE_FILE_SIZE_LIMIT_BYTES, SUBTITLE_SEGMENT_PROCESSING_STATUSES, type StoredAuthSession, TRANSLATE_DUB_PROCESSING_STATUSES, TRANSLATE_SUBTITLES_PROCESSING_STATUSES, USER_PERMISSIONS, assertBatchFileCountAllowed, assertCaptionDurationQuotaAllowed, assertCreateAllowed, assertCreateVideoResolutionAllowed, assertFontFileForUpload, assertLipsyncVideoConstraints, assertMembershipForCreateOptions, assertNoCliUpgradeRequired, assertProjectNotAwaitingProofreadingForDownload, assertProjectNotCurrentlyExporting, assertProjectNotFailedForArtifactAccess, assertReviewerCannotCreateProjectFolder, assertSubtitleFileForTranslation, assertSupportedProjectLanguage, assertUserPermission, assertUserPromptLength, assertVideoResolutionAllowed, attachCliUpgradeSuggestion, batchCreateCaptionProjectsFromFiles, batchCreateFrameTranslationProjectsFromFiles, batchCreateLipsyncProjectsFromFiles, batchCreateTranslationProjectsFromFiles, buildCli, buildCliCommandErrorPayload, buildCliProjectListPage, buildCliUpgradeRequiredError, buildDefaultApiRequestHeaders, buildMediaArtifactFileNameBase, buildNetworkRequestError, buildPermissionDeniedError, buildProjectNotFoundError, buildProjectOpenUrl, buildProjectWebUrl, buildSubtitleFileName, buildUndetectableMediaDurationError, buildUpgradeInstallSpec, calcTotalPoints, clearCliClientRegion, clearStoredSession, completeEmailLogin, createAuthCallbackListener, createCaptionProjectFromFile, createCaptionProjectFromUrl, createDeviceId, createFrameTranslationProjectFromFile, createFrameTranslationProjectFromUrl, createLipsyncProjectFromFile, createLipsyncProjectFromTranslation, createLipsyncProjectFromUrl, createProjectFolder, createTranslationProjectFromFile, createTranslationProjectFromUrl, deleteProjects, deriveMembershipFlags, downloadProjectArtifact, enrichProjectLanguageLabels, estimateConsumedPoints, evaluatePointsAllowanceForCreate, exceedsVideoResolutionLimit, exportProject, extractSubtitleSections, filterProjectFolders, findProjectFolderByExactName, findProjectFolderById, formatCliVersionForApiHeader, generateSubtitleContent, getAuthStatus, getBundledSkillsDir, getCliClientRegion, getLatestLipsyncVariant, getProject, getProjectLanguageCapabilities, getSessionFilePath, getUserFeatureConfig, getUserMembership, getUserMembershipStatus, getUserPoints, getUserPointsStatus, getUserProfile, getUserSummary, getVisualTranslateFonts, handleCliUpgradeHeaders, hasAsrInProcessing, hasCalloutTextsInProcessing, hasCaptionSegmentsMissingSubtitles, hasSubtitleSegmentsInProcessing, hasTranslationBlocksInProcessing, hasUserPermission, inferSubtitleOutputPath, installBundledSkills, isAsrProcessingStatus, isBlockProcessingStatus, isCalloutTextExportBlockedStatus, isCliUpgradeExemptRequest, isExportBlockedFailedStatus, isExportBlockedProcessingStatus, isProjectCurrentlyExporting, isProjectNotFoundError, isRenderedWatermarkSame, isSubtitleArtifact, isSubtitleSegmentProcessingStatus, isTeamAccessSuspended, listBundledSkills, listProjectFolders, listProjects, listUserFonts, loginWithAccessToken, loginWithBrowser, loginWithEmail, logout, materializeVisualTranslateFont, normalizeMembershipUserType, normalizePermissionMap, normalizeProjectStatus, noteCliUpgradeSuggestion, openProject, parseDubPreference, parseFaceMode, parseLanguageInput, parseProjectKind, parseSpeakerNumber, parseSubtitleArtifact, parseSubtitleDisplayType, parseSubtitleUsage, parseUserPrompt, parseVisualTranslateFontOptions, prefetchCliClientRegion, readStoredSession, refreshCliClientRegion, requestEmailLoginCode, requireProjectLanguage, requireUserPermission, resetCliUpgradeSuggestState, resolveCliRequestLanguage, resolveCliRequestTimezone, resolveCliUpgradeHint, resolveCreateTargetLanguageAndLocale, resolveEffectiveDurationMaxSeconds, resolveInstallSpec, resolveLanguageCapabilityLabel, resolveLipsyncEffectiveStatus, resolveOriginalLanguageLabel, resolveProjectArtifactSourceUrl, resolveProjectArtifactType, resolveProjectErrorInfo, resolveProjectExportGuardStatus, resolveProjectFolderId, resolveProjectListNextCursor, resolveProjectTitle, resolveTargetLanguageLabel, resolveTargetLocaleLabel, resolveUpgradeRepoUrl, resolveWorkbuddySkillsDir, runCliInstall, runCliUpgrade, searchProjectFolders, setCliClientRegion, shouldFallbackToAudioTranslationDetail, shouldInitCaptionSubtitles, snakeToCamelKey, startBrowserLoginInBackground, tierMaxUploadSeconds, truncateProjectTitle, uploadUserFontFromFile, validateSubtitleFileContent, waitForAuthenticatedSession, warnCliUpgradeIfSuggested, writeStoredSession };
+export { type AuthLoginChallenge, type AuthLoginOptions, type AuthLoginResult, type AuthStatusResult, BATCH_CREATE_MAX_FILES, BLOCK_PROCESSING_STATUSES, type BrowserLoginOptions, type BrowserLoginResult, CALLOUT_TEXT_EXPORT_BLOCKED_STATUSES, CLI_VERSION, CLI_VERSION_API_HEADER, CliApiError, type CliBatchCreateProjectResult, type CliCommandErrorPayload, type CliCreateCaptionProjectResult, type CliCreateFrameTranslationProjectResult, type CliCreateLipsyncProjectResult, type CliCreateTranslationProjectResult, type CliFeatureConfigResult, type CliMembershipPointItem, type CliMembershipResult, type CliMembershipStatusResult, CliNetworkError, type CliNetworkErrorDetails, type CliPointsStatusResult, type CliProjectArtifactDownloadResult, type CliProjectArtifactType, type CliProjectDeleteResult, type CliProjectDetailResult, type CliProjectExportResult, type CliProjectFolderCreateResult, type CliProjectFolderListResult, type CliProjectFolderSummary, type CliProjectKind, type CliProjectLanguageCapabilitiesResult, type CliProjectLanguageFieldCapabilities, type CliProjectListResult, type CliProjectOpenResult, type CliProjectResolvedKind, type CliProjectSummary, type CliTranslateMoreLanguagesEstimateResult, type CliTranslateMoreLanguagesResult, type CliTranslateMoreLanguagesSettings, type CliTranslateMoreLanguagesTarget, CliUpgradeRequiredError, type CliUpgradeSuggestion, type CliUserProfile, type CliUserProfileResult, type CliUserSummaryResult, DEFAULT_VIDEO_RESOLUTION_LIMIT, DURATION_HARD_LIMIT_SECONDS, EXPORT_BLOCKED_PROCESSING_STATUSES, FILE_SIZE_LIMIT_BYTES, FONT_FILE_SIZE_LIMIT_BYTES, LIPSYNC_1080P_PIXEL_LIMIT, LIPSYNC_DURATION_4K_MAX_SECONDS, LIPSYNC_PROCESSING_STATUSES, type LogoutResult, MAX_PROJECT_TITLE_LENGTH, MAX_USER_PROMPT_LENGTH, PROJECT_NOT_FOUND_MESSAGE, type ProjectErrorInfo, SUBTITLE_FILE_SIZE_LIMIT_BYTES, SUBTITLE_SEGMENT_PROCESSING_STATUSES, type StoredAuthSession, TRANSLATE_DUB_PROCESSING_STATUSES, TRANSLATE_MORE_LANGUAGES_MAX_TARGETS, TRANSLATE_SUBTITLES_PROCESSING_STATUSES, USER_PERMISSIONS, assertBatchFileCountAllowed, assertCaptionDurationQuotaAllowed, assertCreateAllowed, assertCreateVideoResolutionAllowed, assertFontFileForUpload, assertLipsyncVideoConstraints, assertMembershipForCreateOptions, assertNoCliUpgradeRequired, assertProjectNotAwaitingProofreadingForDownload, assertProjectNotCurrentlyExporting, assertProjectNotFailedForArtifactAccess, assertReviewerCannotCreateProjectFolder, assertSubtitleFileForTranslation, assertSupportedProjectLanguage, assertUserPermission, assertUserPromptLength, assertVideoResolutionAllowed, attachCliUpgradeSuggestion, batchCreateCaptionProjectsFromFiles, batchCreateFrameTranslationProjectsFromFiles, batchCreateLipsyncProjectsFromFiles, batchCreateTranslationProjectsFromFiles, buildCli, buildCliCommandErrorPayload, buildCliProjectListPage, buildCliUpgradeRequiredError, buildDefaultApiRequestHeaders, buildMediaArtifactFileNameBase, buildNetworkRequestError, buildPermissionDeniedError, buildProjectNotFoundError, buildProjectOpenUrl, buildProjectWebUrl, buildSubtitleFileName, buildUndetectableMediaDurationError, buildUpgradeInstallSpec, calcTotalPoints, clearCliClientRegion, clearStoredSession, completeEmailLogin, createAuthCallbackListener, createCaptionProjectFromFile, createCaptionProjectFromUrl, createDeviceId, createFrameTranslationProjectFromFile, createFrameTranslationProjectFromUrl, createLipsyncProjectFromFile, createLipsyncProjectFromTranslation, createLipsyncProjectFromUrl, createProjectFolder, createTranslationProjectFromFile, createTranslationProjectFromUrl, deleteProjects, deriveMembershipFlags, downloadProjectArtifact, enrichProjectLanguageLabels, estimateConsumedPoints, estimateTranslateProjectToMoreLanguagesPoints, evaluatePointsAllowanceForCreate, exceedsVideoResolutionLimit, exportProject, extractSubtitleSections, filterProjectFolders, findProjectFolderByExactName, findProjectFolderById, formatCliVersionForApiHeader, generateSubtitleContent, getAuthStatus, getBundledSkillsDir, getCliClientRegion, getLatestLipsyncVariant, getProject, getProjectLanguageCapabilities, getSessionFilePath, getUserFeatureConfig, getUserMembership, getUserMembershipStatus, getUserPoints, getUserPointsStatus, getUserProfile, getUserSummary, getVisualTranslateFonts, handleCliUpgradeHeaders, hasAsrInProcessing, hasCalloutTextsInProcessing, hasCaptionSegmentsMissingSubtitles, hasSubtitleSegmentsInProcessing, hasTranslationBlocksInProcessing, hasUserPermission, inferSubtitleOutputPath, installBundledSkills, isAsrProcessingStatus, isBlockProcessingStatus, isCalloutTextExportBlockedStatus, isCliUpgradeExemptRequest, isExportBlockedFailedStatus, isExportBlockedProcessingStatus, isProjectCurrentlyExporting, isProjectNotFoundError, isRenderedWatermarkSame, isSubtitleArtifact, isSubtitleSegmentProcessingStatus, isTeamAccessSuspended, listBundledSkills, listProjectFolders, listProjects, listUserFonts, loginWithAccessToken, loginWithBrowser, loginWithEmail, logout, materializeVisualTranslateFont, normalizeMembershipUserType, normalizePermissionMap, normalizeProjectStatus, noteCliUpgradeSuggestion, openProject, parseDubPreference, parseFaceMode, parseLanguageInput, parseProjectKind, parseSpeakerNumber, parseSubtitleArtifact, parseSubtitleDisplayType, parseSubtitleUsage, parseUserPrompt, parseVisualTranslateFontOptions, prefetchCliClientRegion, readStoredSession, refreshCliClientRegion, requestEmailLoginCode, requireProjectLanguage, requireUserPermission, resetCliUpgradeSuggestState, resolveCliRequestLanguage, resolveCliRequestTimezone, resolveCliUpgradeHint, resolveCreateTargetLanguageAndLocale, resolveEffectiveDurationMaxSeconds, resolveInstallSpec, resolveLanguageCapabilityLabel, resolveLipsyncEffectiveStatus, resolveOriginalLanguageLabel, resolveProjectArtifactSourceUrl, resolveProjectArtifactType, resolveProjectErrorInfo, resolveProjectExportGuardStatus, resolveProjectFolderId, resolveProjectListNextCursor, resolveProjectTitle, resolveTargetLanguageLabel, resolveTargetLocaleLabel, resolveTranslateMoreLanguagesApiErrorMessage, resolveTranslateMoreLanguagesTargets, resolveUpgradeRepoUrl, resolveWorkbuddySkillsDir, runCliInstall, runCliUpgrade, searchProjectFolders, setCliClientRegion, shouldFallbackToAudioTranslationDetail, shouldInitCaptionSubtitles, snakeToCamelKey, startBrowserLoginInBackground, tierMaxUploadSeconds, translateProjectToMoreLanguages, truncateProjectTitle, uploadUserFontFromFile, validateSubtitleFileContent, waitForAuthenticatedSession, warnCliUpgradeIfSuggested, writeStoredSession };

@@ -15,17 +15,22 @@ Fails **before** upload/API if violated:
 
 **Estimated points per project** (CLI pre-check; 0 = free):
 
-| Tool | Formula |
-| --- | --- |
-| `translate_dub` | `duration / 20`; with `--enable-subtitles` + `--remove-original-subtitle`: `duration / 15` |
-| `translate_subtitles` | `0`; with `--remove-original-subtitle`: `duration / 60` |
-| `visual_translate` | `duration / 6` |
-| `lipsync` | `5 + ceil(duration / 12)` |
+| Tool                  | Formula                                                                                    |
+| --------------------- | ------------------------------------------------------------------------------------------ |
+| `translate_dub`       | `duration / 20`; with `--enable-subtitles` + `--remove-original-subtitle`: `duration / 15` |
+| `translate_subtitles` | `0`; with `--remove-original-subtitle`: `duration / 60`                                    |
+| `visual_translate`    | `duration / 6`                                                                             |
+| `lipsync`             | `5 + ceil(duration / 12)`                                                                  |
 
 `duration` is media length in seconds. Batch create multiplies by item count and target languages. **If total estimated points exceed available balance, the entire batch is rejected before any upload** (no partial batch, no per-file clip fallback).
 
+For `translate_dub more-languages`, do not use a local formula. Run the resolved
+command with `--estimate-only` and use the backend-returned `point` value in the
+confirmation plan. After confirmation, rerun the same command without
+`--estimate-only`.
+
 Rounding: **points estimates should be rounded to 2 decimal places (half-up)**, matching the CLI `round2` / `estimateConsumedPoints` behavior.
 
-**These formulas are estimates for the create plan only — they are not what the backend charged** (SKILL.md §3). Use them *before* a create so the user can weigh the cost against their balance, and label them as estimates. **After a create succeeds, do not report consumption at all**: a failed project is charged nothing, an auto-clipped run bills the clipped length, and the CLI has no access to the actual charge. Do not infer the cost by diffing `auth points` either — the balance is account-wide, so concurrent projects from the web app or another terminal land in the same number.
+**These formulas are estimates for the create plan only — they are not what the backend charged** (SKILL.md §3). Use them _before_ a create so the user can weigh the cost against their balance, and label them as estimates. **After a create succeeds, do not report consumption at all**: a failed project is charged nothing, an auto-clipped run bills the clipped length, and the CLI has no access to the actual charge. Do not infer the cost by diffing `auth points` either — the balance is account-wide, so concurrent projects from the web app or another terminal land in the same number.
 
 Report the specific CLI error; suggest shorter media, upgrade, or top up points.

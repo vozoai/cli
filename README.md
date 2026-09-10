@@ -132,13 +132,13 @@ Useful flags: `--dry-run`, `--path <dir>`, `--link`, `--target cursor|codex|clau
 
 ## Authentication
 
-| Command            | Description                                      |
-| ------------------ | ------------------------------------------------ |
-| `auth login`       | Browser OAuth login; stores a local session      |
-| `auth logout`      | Clear the local session (and remote if possible) |
-| `auth status`      | Show whether the current session is signed in    |
-| `auth points`      | Show remaining point balances                    |
-| `auth membership`  | Show plan / membership status                    |
+| Command           | Description                                      |
+| ----------------- | ------------------------------------------------ |
+| `auth login`      | Browser OAuth login; stores a local session      |
+| `auth logout`     | Clear the local session (and remote if possible) |
+| `auth status`     | Show whether the current session is signed in    |
+| `auth points`     | Show remaining point balances                    |
+| `auth membership` | Show plan / membership status                    |
 
 ```bash
 vozo-cli auth login
@@ -182,21 +182,21 @@ Session files are stored under `~/.vozo/cli/`. Do not share `session.json` or to
 
 Product tools use `project <kind> …`, where `<kind>` is one of:
 
-| Product             | Kind                  | Typical create sources                                                 |
-| ------------------- | --------------------- | ---------------------------------------------------------------------- |
-| Translate & Dub     | `translate_dub`       | `--from-file` / `--from-files` / `--from-dir` / `--from-url` (video or audio) |
-| Translate Subtitles | `translate_subtitles` | Same as above (video only)                                             |
-| Visual Translate    | `visual_translate`    | Same as above (video only; original language required)                 |
+| Product             | Kind                  | Typical create sources                                                              |
+| ------------------- | --------------------- | ----------------------------------------------------------------------------------- |
+| Translate & Dub     | `translate_dub`       | `--from-file` / `--from-files` / `--from-dir` / `--from-url` (video or audio)       |
+| Translate Subtitles | `translate_subtitles` | Same as above (video only)                                                          |
+| Visual Translate    | `visual_translate`    | Same as above (video only; original language required)                              |
 | Lip Sync            | `lipsync`             | `--from-file` / `--from-files` / `--from-dir` / `--from-url` / `--from-translation` |
 
 Each kind supports:
 
-| Command                        | Description                                        |
-| ------------------------------ | -------------------------------------------------- |
-| `project <kind> create`        | Create a project (batch supported where noted)     |
-| `project <kind> get <id>`      | Fetch status and project details                   |
-| `project <kind> open <id>`     | Return / open the web editor preview URL           |
-| `project <kind> export <id>`   | Start a backend export when needed                 |
+| Command                        | Description                                         |
+| ------------------------------ | --------------------------------------------------- |
+| `project <kind> create`        | Create a project (batch supported where noted)      |
+| `project <kind> get <id>`      | Fetch status and project details                    |
+| `project <kind> open <id>`     | Return / open the web editor preview URL            |
+| `project <kind> export <id>`   | Start a backend export when needed                  |
 | `project <kind> download <id>` | Download an artifact with `--artifact` / `--output` |
 
 Common flow: `create` → poll `get` until processing finishes → `export` (if needed) → `download`. Use `open` when the user should review or edit in the web editor.
@@ -212,6 +212,44 @@ vozo-cli project translate_dub download <project-id> --artifact dubbed_video --o
 vozo-cli project translate_dub download <project-id> --artifact background_audio --output ./bgm.wav
 vozo-cli project translate_subtitles download <project-id> --artifact original_subtitle_vtt --output ./original
 ```
+
+### Translate an existing project into more languages
+
+Translate & Dub projects can create additional language projects from the
+edited result, instead of uploading the original media again:
+
+```bash
+vozo-cli project translate_dub more-languages <project-id> \
+  --target-language de fr \
+  --prompt "Keep product names in English" \
+  --glossary <glossary-id-1> <glossary-id-2> \
+  --auto-align-video \
+  --proofread-before-dubbing \
+  --estimate-only
+```
+
+Omit `--prompt` / `--glossary` to inherit the source project values. Pass
+`--clear-prompt` / `--clear-glossary` to remove them. First run with
+`--estimate-only` and show the returned `point` value to the user. After they
+confirm, rerun the same command without `--estimate-only`.
+Eligibility and status are enforced when thetranslation request is executed,
+so execution may still return an error. Video speed adjustment inherits the
+source project when omitted. Two-step translation is off by default and is
+enabled only when `--proofread-before-dubbing` is explicitly specified.
+As with `translate_dub create`, pass`--auto-align-video` to enable video
+alignment explicitly.
+
+This command currently supports **Translate & Dub projects only**. If it
+returns `Project not found.`, search for the same project id with
+`vozo-cli project search "<project-id>" --kind all`. When the exact project is
+listed with another kind (or the result reports that an unsupported kind was
+omitted), tell the user that the project exists but its type is not supported
+by More Languages. If no matching project is found, keep reporting it as not
+found rather than assuming its type.
+
+Each More Languages request accepts at most **40 target languages**. If the
+selection exceeds 40, reduce it or split it into separate requests before
+running the estimate or translation.
 
 ## Advanced Usage
 
@@ -290,12 +328,12 @@ List available fonts with `vozo-cli project visual_translate fonts`.
 
 ## Commands
 
-| Command   | Description                           |
-| --------- | ------------------------------------- |
+| Command   | Description                              |
+| --------- | ---------------------------------------- |
 | `install` | Bootstrap CLI + skills (`npx … install`) |
-| `auth`    | See [Authentication](#authentication) |
-| `project` | See [Project](#project)               |
-| `skills`  | See [Agent Skills](#agent-skills)     |
+| `auth`    | See [Authentication](#authentication)    |
+| `project` | See [Project](#project)                  |
+| `skills`  | See [Agent Skills](#agent-skills)        |
 
 ## License
 

@@ -57,6 +57,45 @@ Video: `.avi`, `.webm`, `.wmv`, `.mp4`, `.mov`. Audio: `.mp3`, `.wav`, `.m4a` â†
 | Glossary             | `--glossary <ids...>` (Studio+)                                                                                                                                                                                                                                     |
 | Folder               | `--folder`                                                                                                                                                                                                                                                          |
 
+**Translate an existing project to more languages (Studio+):**
+
+Currently supports **Translate & Dub projects only**.
+
+```text
+project translate_dub more-languages <id> --target-language <languages...>
+  [--prompt <text> | --clear-prompt]
+  [--glossary <ids...> | --clear-glossary]
+  [--auto-align-video]
+  [--proofread-before-dubbing]
+  [--estimate-only]
+```
+
+- One request can include up to 40 unique target language/locale tags. If the
+  user selects more than 40, ask them to reduce or split the selection before
+  estimation; do not silently start multiple requests.
+- Prompt and glossary inherit from the source project when omitted; explicit
+  flags replace or clear them.
+- Video speed adjustment (`autoAlignVideo`) inherits when omitted. Two-step
+  translation (`proofreadBeforeDubbing`) defaults to off and is enabled only
+  when the user explicitly requests `--proofread-before-dubbing`; it does not
+  inherit from the source project.
+- This uses the edited source project through `translate_to_more_language`; it
+  is not equivalent to repeating `create` from the original media.
+- Run with `--estimate-only` first, confirm the full target/settings plan and
+  backend-returned `point`, then rerun without that flag. Membership and project
+  status eligibility are validated only by the execution endpoint. The estimate
+  endpoint only calculates points; success does not mean an execution precheck
+  passed, and execution may still return a status/eligibility error. State this
+  explicitly when presenting the estimate. If the API requires a library Voice
+  replacement, hand off to the Web editor.
+- If execution fails with `code: 1710`, run `auth membership` to fetch and
+  report the current subscription state with the existing error message. Do not
+  infer the plan from the error or retry automatically.
+- If the command returns `Project not found.`, search the exact id with
+  `project search "<id>" --kind all`. If another or omitted kind is identified,
+  tell the user that this project type is not supported by More Languages; do
+  not relabel an unmatched id as an unsupported type.
+
 **Download artifacts (download as many as the user wants):**
 
 | Artifact                  | Format |
@@ -124,9 +163,9 @@ Subtitles are generated locally (no export). Video/audio often need `export` fir
 | `--from-files` / `--from-dir` | `from_this_video`                       |
 | `--from-translation <dub-id>` | Dubbed track from translate dub project |
 
-| Setting        | Flag                       |
-| -------------- | -------------------------- |
-| Face mode      | `--face-mode single\|more` (**required**, no default) |
-| Folder         | `--folder`                 |
+| Setting   | Flag                                                  |
+| --------- | ----------------------------------------------------- |
+| Face mode | `--face-mode single\|more` (**required**, no default) |
+| Folder    | `--folder`                                            |
 
 **Download:** `lipsync_video` (mp4).

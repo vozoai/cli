@@ -101,9 +101,32 @@ Rules:
 - Each step in the chain is slower and costs more than D1: no parallelism, and each step reprocesses the full output of the previous one. Say this cost/time tradeoff in the plan so the user can confirm.
 - Dub only changes the audio track; visual translate only changes burned-in on-screen text. When setting the next step's `--original-language`, use that step's own input channel language (on-screen text language for visual translate, spoken audio language for dub) — do not just copy the previous step's `--target-language`.
 
-## E. One-shot multi-language creation (not translate-more)
+## E. Multiple target languages
 
-**Not** `translate more` on one project. Repeat **create** per target language:
+### E1. Existing edited Translate & Dub project → more languages
+
+```text
+vozo-cli project translate_dub get <id>
+vozo-cli project translate_dub more-languages <id> \
+  --target-language en ja fr \
+  [--prompt "..."] [--glossary <ids...>] \
+  --estimate-only
+# After the user confirms the returned point value, rerun without --estimate-only.
+```
+
+Omitted prompt/glossary settings inherit from the source project. This path
+uses the edited translation as its source and creates additional language
+projects in one request. The estimate endpoint only returns points; it does not
+validate project status or eligibility and must not be reported as a successful
+precheck. The execution endpoint performs those checks and may still return an
+error. Use the returned points in the confirmation plan. Prefer this path when
+the user provides an existing Translate & Dub project id and asks for additional
+target languages. Consider E2 only when the user explicitly wants independent
+projects based on the original media.
+
+### E2. Original media → independent projects per language
+
+When there is no existing edited project to reuse, repeat **create** per target language:
 
 ```text
 for lang in en ja fr; do

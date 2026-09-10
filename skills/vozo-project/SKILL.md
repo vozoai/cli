@@ -16,6 +16,18 @@ metadata:
 
 Requires the official `vozo-cli` from npm [`@vozoai/cli`](https://www.npmjs.com/package/@vozoai/cli) (source: [github.com/vozoai/cli](https://github.com/vozoai/cli)). Install with `npm install -g @vozoai/cli` or `npx @vozoai/cli@latest install`. Do not install from third-party mirrors. Auth is handled by `vozo-auth`.
 
+## Follow the documented CLI interface
+
+For normal Vozo project workflows, follow this skill, its referenced documents,
+and `vozo-cli ... --help`. Do not inspect the CLI source code to discover how to
+perform a documented operation, and do not replace documented CLI commands with
+direct calls to inferred internal APIs.
+
+Source inspection is appropriate only when the user explicitly asks to develop,
+debug, review, or explain the CLI implementation, or when the documented
+interface is missing or inconsistent. If documentation is insufficient, state
+the gap instead of silently guessing.
+
 ## What is Vozo / what can this CLI do (unified pitch)
 
 When the user asks anything like "what are you / what can you do / what is this / what can the CLI do / introduce Vozo", answer with the following canonical pitch (translate it into the user's language, but keep product names in English):
@@ -52,7 +64,11 @@ Use Vozo website product names in user-facing text. Keep CLI command paths uncha
 - **Create or find dashboard folders** (`project folder create` / `folder list` / `folder search`) and create projects inside them with `--folder`.
 - Run **create → poll → export (if needed) → download** for any single tool.
 - **Chain** multiple tools (user specifies order, or you propose a plan).
-- **Create many languages at once** by repeating create with different `--target-language` (not “translate to more” on one project).
+- When the user provides an **existing Translate & Dub project id** and wants one
+  or more additional target languages, prefer `translate_dub more-languages` so
+  the existing edits are preserved. Consider repeating `create` only when the
+  user explicitly wants independent projects from the original media.
+- **Create independent projects in many languages from original media** by repeating create with different `--target-language`.
 - **Bulk download** after listing/searching with filters (folder, kind, date, language, title).
 - Give users **project links** (`webUrl`) and `open` so they can edit on the web.
 
@@ -62,6 +78,7 @@ Use Vozo website product names in user-facing text. Keep CLI command paths uncha
 vozo-cli auth status | points | membership
 vozo-cli project list | search | folder list | folder create | folder search | delete
 vozo-cli project <tool> create | get | open | export | download
+vozo-cli project translate_dub more-languages <id> --target-language <languages...>
 ```
 
 `<tool>` = `translate_dub` | `translate_subtitles` | `visual_translate` | `lipsync`
@@ -107,11 +124,72 @@ Rules:
 
 Foreground waiting is only acceptable for short checks. Long processing and export waits should be treated as background watch tasks whenever possible.
 
+### 2.6. Existing Translate & Dub project → more languages
+
+Prefer `project translate_dub more-languages <id>` when the user provides an
+existing Translate & Dub project id and wants its **edited result** translated
+into additional target languages. This preserves existing edits, unlike
+repeating `create`, which starts independent projects from the original media.
+Consider `create` instead only when the user explicitly wants independent
+projects based on the original media. More Languages currently supports
+**Translate & Dub projects only**; do not use this command for Translate
+Subtitles, Visual Translate, Lip Sync, or another project type.
+
+1. The target language list must be an explicit user choice, with at most **40
+   unique targets per request**. Show labels and codes, and never include the
+   source/current language unless requested. If the user selects more than 40,
+   stop before estimation or execution, tell them that one request can process
+   at most 40, and ask them to reduce or split the selection; do not silently
+   start multiple requests.
+2. Run the fully resolved command with `--estimate-only`. This is read-only and
+   asks the backend only to return the exact `point` value. It is **not an
+   execution precheck** and does not validate project status or eligibility. A
+   successful estimate must never be described as precheck success or proof
+   that execution will succeed. Do not calculate More Languages points locally.
+3. Show a confirmation plan containing source project id, all target languages,
+   prompt, glossary ids, resolved video speed adjustment/two-step translation
+   settings, estimated
+   project count, and the backend-returned `point` value.
+4. Omitted prompt, glossary, and video speed adjustment settings inherit the
+   source project. Two-step translation does **not** inherit: it defaults to off
+   and is enabled only when the user explicitly requests it with
+   `--proofread-before-dubbing`. Never enable it merely because the source
+   project used it. The video speed adjustment flag only enables that setting,
+   matching `translate_dub create`.
+5. Wait for explicit confirmation, then rerun the same command once without
+   `--estimate-only`. The response may include child project ids under the
+   backend `result`; list/get those projects afterward rather than repeating the
+   write on uncertainty.
+
+Do not duplicate membership or project-status eligibility checks in the CLI;
+the execution endpoint enforces them and the CLI surfaces its More Languages
+error messages. The estimate endpoint only calculates points. When presenting
+its result, explicitly tell the user that execution can still fail if the
+project status or eligibility is invalid.
+
+If execution fails with `code: 1710`, immediately run the read-only
+`vozo-cli auth membership` command to fetch the current account's subscription
+state. Report the returned membership and status together with the existing
+1710 error message. Do not infer the user's current plan from the error alone,
+and do not retry the translation automatically.
+
+If `more-languages` returns `Project not found.`, run the read-only
+`project search "<id>" --kind all` check and compare exact `items[].id` values.
+If the project is found under another `kind`, or the exact-id search reports
+that an unsupported kind was omitted, tell the user that the project exists but
+its project type is not supported by More Languages. If the search has no exact
+match and no unsupported-kind signal, report the project as not found; do not
+claim an unsupported type without evidence.
+
+If the backend reports an incompatible library Voice, hand off to the Web More
+Languages dialog so the user can choose a replacement Voice; the CLI does not
+guess Voice replacements.
+
 ### 3. Present plans before writes
 
-**Never run `create` — single or batch — without first showing the resolved parameters and getting explicit confirmation.** This applies even when the user's request already sounds fully specified (e.g. "dub this video to English"); "show the plan" means restating the exact resolved values back to the user, not just silently proceeding because you think you understood them.
+**Never run `create` — single or batch — or execute `translate_dub more-languages` without first showing the resolved parameters and getting explicit confirmation.** The read-only `more-languages --estimate-only` point estimate is the exception: run it before confirmation so the plan contains the backend point estimate, but never treat it as an eligibility/status precheck. This applies even when the user's request already sounds fully specified (e.g. "dub this video to English"); "show the plan" means restating the exact resolved values back to the user, not just silently proceeding because you think you understood them.
 
-Before **any** create (single item or batch) or bulk download, show a plan that is concrete enough for the user to validate the exact work that is about to happen.
+Before **any** create (single item or batch), executing `translate_dub more-languages` without `--estimate-only`, or bulk download, show a plan that is concrete enough for the user to validate the exact work that is about to happen.
 
 **Use the full checklist in `references/create-plan-checklist.md` — do not improvise a shorter summary.** Present every applicable setting with its **resolved value**, including defaults and batch-unsupported rows.
 
@@ -139,7 +217,7 @@ At minimum, always include:
 - for Lip Sync: source mode and face mode (`--face-mode` is **required**; ask if missing — do not default to single)
 - whether the user wants the result **auto-downloaded when processing finishes** — offer it here once; a "yes" in the plan confirmation counts as the explicit download request required by §3.2
 - for batch: estimated project count, and whether it is a single-language batch or repeated per language
-- **estimated points** (label as estimate; formulas in `references/limits.md` / checklist) plus available balance from `auth points` when known
+- **estimated points** (for More Languages, use only the backend-returned `point`; otherwise use formulas in `references/limits.md` / checklist) plus available balance from `auth points` when known
 - output / follow-up expectations (`webUrl`, whether `export` will be needed, which artifacts will be downloaded)
 - when summarizing languages for users, prefer human labels (`English`, `Chinese (Hong Kong)`); keep codes for the actual create command. For create, pass locale via `--target-language` tags like `zh-HK` when a region/accent is needed
 - quota warnings (points, Studio for batch, membership expiry)
@@ -147,7 +225,7 @@ At minimum, always include:
 
 **Incomplete plans are invalid.** If you only list “target language + source file” and skip defaults the CLI will apply, the user cannot truly confirm the job. Stop and expand the plan before asking for confirmation.
 
-Wait for explicit user confirmation before running `create` (single or batch) or a bulk `download`. A one-word request ("yes" / "go" / "confirm") after you've shown the plan counts as confirmation; a request that jumps straight to naming the action without ever seeing the resolved parameters does not.
+Wait for explicit user confirmation before running `create` (single or batch), executing `translate_dub more-languages` without `--estimate-only`, or a bulk `download`. A one-word request ("yes" / "go" / "confirm") after you've shown the plan counts as confirmation; a request that jumps straight to naming the action without ever seeing the resolved parameters does not.
 
 **Confirm exactly once — and "once" always means confirming the FULL plan.** The user's confirmation only counts if the message they are replying to contains the complete resolved plan (every applicable checklist row).
 
@@ -156,7 +234,7 @@ Two valid paths, no third:
 1. **No missing required fields** → present the full plan as plain text, wait for the user's reply. Do **not** also open a confirmation popup — showing the plan in text and waiting for a reply _is_ the confirmation, and adding a popup on top is redundant double-confirmation.
 2. **Missing required fields** (e.g. target language, dub vs subtitles) → use a choice prompt to collect ONLY the missing values. **This prompt is a data question, NOT a create confirmation.** After it resolves, you MUST still present the full plan in text and wait for an explicit reply before running `create`.
 
-**Hard gate before every `create`:** ask yourself — "did the user's last confirmation come as a reply to a message showing the complete plan?" If no, you do not have confirmation. Answering a language-selection popup is never authorization to create.
+**Hard gate before every `create` or executable `translate_dub more-languages` call:** ask yourself — "did the user's last confirmation come as a reply to a message showing the complete plan?" If no, you do not have confirmation. This gate does not block the read-only `--estimate-only` point estimate; that estimate does not validate execution eligibility or status. Answering a language-selection popup is never authorization to create.
 
 - ❌ Wrong: popup asks "original language? target language?" → user picks ko/ja → `create` runs immediately.
 - ✅ Right: popup asks ko/ja → agent shows the full plan (source, title, font, folder, prompt/glossary, auto-download) → user replies "yes" → `create` runs.
@@ -167,7 +245,7 @@ If required fields are missing, stop before execution and list the missing field
 
 ### 3.1. Target language: never infer (important)
 
-For any `create` that involves translation, dubbing, or visual translate, `--target-language` must come from an **explicit user choice** before you run the command.
+For any `create` that involves translation, dubbing, or visual translate, and for `translate_dub more-languages`, every `--target-language` must come from an **explicit user choice** before you run the command.
 
 **When the user has not named a target language, do not:**
 
@@ -351,12 +429,12 @@ Read `references/limits.md` before `create` when the media may be near a duratio
 
 ## Confirmation Rules
 
-| Policy                              | Commands                                                                                                                               |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Read-only (run immediately)         | `list`, `search`, `folder list`, `folder search`, `<tool> get`, `<tool> open`                                                          |
-| Confirm first                       | `folder create`, `<tool> create` (single or batch — see §3), `<tool> export`, `<tool> download`, bulk `download`, multi-project chains |
-| Never without explicit user request | `export`, `download` — see §3.2                                                                                                        |
-| Confirm twice, see §3.5             | `project delete` (single id or multiple ids — same rule for both)                                                                      |
+| Policy                              | Commands                                                                                                                                                                          |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read-only (run immediately)         | `list`, `search`, `folder list`, `folder search`, `<tool> get`, `<tool> open`, `translate_dub more-languages --estimate-only`                                                     |
+| Confirm first                       | `folder create`, `<tool> create` (single or batch — see §3), executable `translate_dub more-languages`, `<tool> export`, `<tool> download`, bulk `download`, multi-project chains |
+| Never without explicit user request | `export`, `download` — see §3.2                                                                                                                                                   |
+| Confirm twice, see §3.5             | `project delete` (single id or multiple ids — same rule for both)                                                                                                                 |
 
 ---
 
@@ -366,6 +444,11 @@ Read `references/limits.md` before `create` when the media may be near a duratio
 - `errorKind: "network"` on a failed command: connectivity/DNS/TLS/proxy issue (not auth or project failure). Report `network.code` / `message`; do **not** auto-retry — wait for the user to decide.
 - `upgradeSuggestion` on a **successful** JSON result: soft recommendation only — command already succeeded. Mention a newer CLI is available when convenient; do **not** stop the workflow or treat it as an error.
 - Processing: poll `get`; do not claim ready while `processing` is `true`.
+- More Languages `code: 1710`: fetch the current subscription state with
+  `auth membership`, report it with the existing error message, and do not
+  retry automatically.
+- More Languages `Project not found.`: search the exact id with `project search "<id>" --kind all`; when the result identifies another/omitted kind, tell the user that More Languages supports only Translate & Dub projects and this project type is unsupported.
+- More Languages incompatible Voice: do not invent a replacement Voice id; share the source `webUrl` and ask the user to finish the replacement in the Web More Languages dialog.
 - Status `proofreading` with `processing: false`: the dub is done but voices need user confirmation before export/download. Do not keep polling and do not retry `export` or `download`; share `webUrl` and ask the user to confirm the voices in the web editor.
 - Download missing URL: `export` → poll `get` until `processing` is `false` → retry `download` — **only when the user already asked for a download**.
 - Subtitle download empty: project may lack blocks/segments yet.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/core/config.ts
-var CLI_VERSION = "1.0.2";
+var CLI_VERSION = "1.0.3";
 function formatCliVersionForApiHeader(version) {
   const withoutPrefix = version.trim().replace(/^v/i, "");
   const coreMatch = withoutPrefix.match(/^(\d+\.\d+\.\d+)/);
@@ -342,6 +342,7 @@ function buildCliCommandErrorPayload(error) {
     };
   }
   return {
+    ...error instanceof CliApiError && error.code !== void 0 ? { code: error.code } : {},
     message,
     status: "failed"
   };
@@ -5883,6 +5884,34 @@ function asRecord3(value) {
 function readString4(value) {
   return typeof value === "string" && value.trim() ? value : null;
 }
+function readFirstString(source, keys) {
+  const record = asRecord3(source);
+  for (const key of keys) {
+    if (typeof record[key] === "string") {
+      return record[key];
+    }
+  }
+  return null;
+}
+function readFirstBoolean(source, keys) {
+  const record = asRecord3(source);
+  for (const key of keys) {
+    if (typeof record[key] === "boolean") {
+      return record[key];
+    }
+  }
+  return null;
+}
+function readFirstStringArray(source, keys) {
+  const record = asRecord3(source);
+  for (const key of keys) {
+    const value = record[key];
+    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+      return value;
+    }
+  }
+  return null;
+}
 function isPlaceholderExportDownloadUrl(url) {
   return url.includes("/exports/-/download_url");
 }
@@ -6775,6 +6804,179 @@ async function getProject(options) {
       ),
       raw: data
     }
+  };
+}
+var TRANSLATE_MORE_LANGUAGES_MAX_TARGETS = 40;
+function resolveTranslateMoreLanguagesTargets(values) {
+  const inputs = values.flatMap((value) => String(value).split(",")).map((value) => value.trim()).filter(Boolean);
+  if (!inputs.length) {
+    throw new Error(
+      "Provide at least one `--target-language`. Run `vozo-cli project languages translate_dub` to see supported values."
+    );
+  }
+  const targets = /* @__PURE__ */ new Map();
+  for (const value of inputs) {
+    const resolved = resolveCreateTargetLanguageAndLocale({
+      kind: "translate_dub",
+      targetLanguage: value
+    });
+    const canonicalValue = resolved.targetLocale ? `${resolved.targetLanguage}-${resolved.targetLocale}` : resolved.targetLanguage;
+    const key = `${resolved.targetLanguage}-${resolved.targetLocale ?? ""}`;
+    targets.set(key, {
+      value: canonicalValue,
+      language: resolved.targetLanguage,
+      locale: resolved.targetLocale ?? ""
+    });
+  }
+  if (targets.size > TRANSLATE_MORE_LANGUAGES_MAX_TARGETS) {
+    throw new Error(
+      `Translate to More Languages can process up to ${TRANSLATE_MORE_LANGUAGES_MAX_TARGETS} target languages per request. Split additional languages into another request.`
+    );
+  }
+  return Array.from(targets.values());
+}
+var TRANSLATE_MORE_LANGUAGES_GENERIC_ERROR_MESSAGE = "The current project cannot be translated into more languages. Please check the project status and try again.";
+var TRANSLATE_MORE_LANGUAGES_ERROR_MESSAGES = /* @__PURE__ */ new Map([
+  [
+    10071,
+    "Some selected voices don\u2019t support the target language. Please replace them and try again."
+  ],
+  [
+    1710,
+    "Upgrade to the Studio Plan for multi-language translation without re-uploading or re-proofreading."
+  ],
+  [
+    1711,
+    "Translate to More Languages: generate speech for pending segments first."
+  ],
+  [1712, "Translate to More Languages: retranslate pending segments first."],
+  [
+    1713,
+    "Translate to More Languages: unavailable while some segments are still processing."
+  ],
+  [
+    1714,
+    "Translate to More Languages: unavailable while retranslation is in progress."
+  ],
+  [
+    1715,
+    "Translate to More Languages: fill in missing source or translated text first."
+  ],
+  [810, TRANSLATE_MORE_LANGUAGES_GENERIC_ERROR_MESSAGE],
+  [
+    1716,
+    "Translate to More Languages: unavailable while some segments are still processing."
+  ],
+  [1720, "You can select up to 3 glossaries."]
+]);
+function resolveTranslateMoreLanguagesApiErrorMessage(code) {
+  return code === void 0 ? null : TRANSLATE_MORE_LANGUAGES_ERROR_MESSAGES.get(code) ?? null;
+}
+function remapTranslateMoreLanguagesApiError(error) {
+  if (error instanceof CliApiError) {
+    const message = resolveTranslateMoreLanguagesApiErrorMessage(error.code);
+    if (message) {
+      throw new CliApiError(message, error.status, error.code, error.details);
+    }
+  }
+  throw error;
+}
+async function runTranslateMoreLanguagesRequest(request) {
+  try {
+    return await request();
+  } catch (error) {
+    remapTranslateMoreLanguagesApiError(error);
+  }
+}
+async function prepareTranslateMoreLanguagesRequest(options) {
+  const targets = resolveTranslateMoreLanguagesTargets(options.targetLanguages);
+  const { data, kind } = await fetchProjectDetail({
+    apiBaseUrl: options.apiBaseUrl,
+    id: options.id,
+    kind: "translate_dub",
+    skipSideEffects: true
+  });
+  const sourceKind = kind === "audio-translation" ? kind : "translate_dub";
+  const promptWasOverridden = options.userPrompt !== void 0;
+  const glossaryWasOverridden = options.glossaryIdList !== void 0;
+  const userPrompt = promptWasOverridden ? options.userPrompt ?? "" : readFirstString(data, ["userPrompt", "user_prompt"]) ?? "";
+  const promptType = promptWasOverridden ? "" : readFirstString(data, ["promptType", "prompt_type"]) ?? "";
+  const glossaryIdList = glossaryWasOverridden ? options.glossaryIdList ?? [] : readFirstStringArray(data, ["glossaryIDList", "glossary_id_list"]) ?? [];
+  const folderId = readFirstString(data, ["folderID", "folder_id"]) ?? "";
+  const autoAlignVideo = options.autoAlignVideo ?? readFirstBoolean(data, ["autoAlignVideo", "auto_align_video"]) ?? false;
+  const proofreadBeforeDubbing = options.proofreadBeforeDubbing ?? false;
+  return {
+    apiPathPrefix: sourceKind === "audio-translation" ? "audio_translations" : "translations",
+    settings: {
+      autoAlignVideo,
+      folderId,
+      glossaryIdList,
+      promptType,
+      proofreadBeforeDubbing,
+      userPrompt
+    },
+    sourceKind,
+    targets
+  };
+}
+async function estimateTranslateProjectToMoreLanguagesPoints(options) {
+  const prepared = await prepareTranslateMoreLanguagesRequest(options);
+  const response = await runTranslateMoreLanguagesRequest(
+    () => authorizedRequest2({
+      apiBaseUrl: options.apiBaseUrl,
+      body: {
+        language_with_locales: prepared.targets.map((target) => ({
+          language: target.language,
+          locale: target.locale
+        }))
+      },
+      method: "POST",
+      path: `/v1/${prepared.apiPathPrefix}/${options.id}/translate_to_more_language/point_estimates`
+    })
+  );
+  const point = response.data.point;
+  if (typeof point !== "number" || !Number.isFinite(point) || point < 0) {
+    throw new Error(
+      "The point estimate response did not contain a valid `point` value."
+    );
+  }
+  return {
+    sourceId: options.id,
+    sourceKind: prepared.sourceKind,
+    status: "estimated",
+    point,
+    targets: prepared.targets,
+    settings: prepared.settings
+  };
+}
+async function translateProjectToMoreLanguages(options) {
+  const prepared = await prepareTranslateMoreLanguagesRequest(options);
+  const response = await runTranslateMoreLanguagesRequest(
+    () => authorizedRequest2({
+      apiBaseUrl: options.apiBaseUrl,
+      body: {
+        language_with_locales: prepared.targets.map((target) => ({
+          language: target.language,
+          locale: target.locale
+        })),
+        folder_id: prepared.settings.folderId,
+        user_prompt: prepared.settings.userPrompt,
+        prompt_type: prepared.settings.promptType,
+        glossary_id_list: prepared.settings.glossaryIdList,
+        auto_align_video: prepared.settings.autoAlignVideo,
+        proofread_before_dubbing: prepared.settings.proofreadBeforeDubbing
+      },
+      method: "POST",
+      path: `/v1/${prepared.apiPathPrefix}/${options.id}/translate_to_more_language`
+    })
+  );
+  return {
+    sourceId: options.id,
+    sourceKind: prepared.sourceKind,
+    status: "started",
+    targets: prepared.targets,
+    settings: prepared.settings,
+    result: response.data ?? null
   };
 }
 async function exportProject(options) {
@@ -9277,6 +9479,50 @@ function registerProjectCommands(program) {
     emitWarnings(result);
     printJson(result);
   });
+  translateDub.command("more-languages <id>").description(
+    "Translate an existing project into more languages (currently supports Translate & Dub projects only)"
+  ).requiredOption(
+    "--target-language <languages...>",
+    `Up to ${TRANSLATE_MORE_LANGUAGES_MAX_TARGETS} target language codes or locale tags (e.g. en ja zh-HK)`
+  ).option(
+    "--prompt <text>",
+    "Replace the source project translation prompt (max 1000 characters)",
+    parseUserPrompt
+  ).option("--clear-prompt", "Clear the source project translation prompt").option(
+    "--glossary <ids...>",
+    "Replace the source project glossary ID list (max 3)"
+  ).option("--clear-glossary", "Clear the source project glossary list").option(
+    "--auto-align-video",
+    "Enable video alignment for the translated output"
+  ).option(
+    "--proofread-before-dubbing",
+    "Run proofreading before dubbing starts"
+  ).option(
+    "--estimate-only",
+    "Calculate required points without starting translation"
+  ).action(async (id, options) => {
+    if (options.clearPrompt && options.prompt !== void 0) {
+      throw new Error("Use either `--prompt` or `--clear-prompt`, not both.");
+    }
+    if (options.clearGlossary && options.glossary !== void 0) {
+      throw new Error(
+        "Use either `--glossary` or `--clear-glossary`, not both."
+      );
+    }
+    const glossaryIdList = options.clearGlossary ? [] : options.glossary !== void 0 ? collectGlossaryIdList(options.glossary) : void 0;
+    const userPrompt = options.clearPrompt ? "" : options.prompt;
+    const requestOptions = {
+      autoAlignVideo: options.autoAlignVideo,
+      glossaryIdList,
+      id: String(id),
+      proofreadBeforeDubbing: options.proofreadBeforeDubbing,
+      targetLanguages: collectMultiValueOption(options.targetLanguage),
+      userPrompt
+    };
+    printJson(
+      options.estimateOnly ? await estimateTranslateProjectToMoreLanguagesPoints(requestOptions) : await translateProjectToMoreLanguages(requestOptions)
+    );
+  });
   registerToolDetailCommands(
     translateDub,
     "translate_dub",
@@ -9858,6 +10104,11 @@ export {
   buildCliProjectListPage,
   listProjects,
   getProject,
+  TRANSLATE_MORE_LANGUAGES_MAX_TARGETS,
+  resolveTranslateMoreLanguagesTargets,
+  resolveTranslateMoreLanguagesApiErrorMessage,
+  estimateTranslateProjectToMoreLanguagesPoints,
+  translateProjectToMoreLanguages,
   exportProject,
   buildMediaArtifactFileNameBase,
   downloadProjectArtifact,
@@ -9890,4 +10141,4 @@ export {
   installBundledSkills,
   buildCli
 };
-//# sourceMappingURL=chunk-623HG63W.mjs.map
+//# sourceMappingURL=chunk-6QLXNZWG.mjs.map
