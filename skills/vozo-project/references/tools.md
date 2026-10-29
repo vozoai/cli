@@ -169,3 +169,5 @@ Subtitles are generated locally (no export). Video/audio often need `export` fir
 | Folder    | `--folder`                                            |
 
 **Download:** `lipsync_video` (mp4).
+
+Source language values must exactly match `project languages <kind>` (for example, `en-US` or `it-IT`). Do not use target language base codes such as `en` or `it` as source languages. `auto` is available only for translate_dub and translate_subtitles.

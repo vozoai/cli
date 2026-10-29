@@ -31,7 +31,7 @@ var import_node_stream = require("stream");
 var import_promises2 = require("stream/promises");
 
 // src/core/config.ts
-var CLI_VERSION = "1.0.3";
+var CLI_VERSION = "1.0.4";
 function formatCliVersionForApiHeader(version) {
   const withoutPrefix = version.trim().replace(/^v/i, "");
   const coreMatch = withoutPrefix.match(/^(\d+\.\d+\.\d+)/);
@@ -3918,6 +3918,7 @@ var TranslateOriginalLanguageMap = {
   "Hungarian (Hungary)": "hu-HU",
   "Danish (Denmark)": "da-DK",
   "Dutch (Belgium)": "nl-BE",
+  "Dutch (Netherlands)": "nl-NL",
   "Polish (Poland)": "pl-PL",
   "Romanian (Romania)": "ro-RO",
   "Slovak (Slovakia)": "sk-SK",
@@ -3927,6 +3928,7 @@ var TranslateOriginalLanguageMap = {
   "Italian (Italy)": "it-IT",
   "Italian (Switzerland)": "it-CH",
   "Bulgarian (Bulgaria)": "bg-BG",
+  "Burmese (Myanmar)": "my-MM",
   "Greek (Greece)": "el-GR",
   "Malay (Malaysia)": "ms-MY",
   "Tamil (India)": "ta-IN",
@@ -4575,11 +4577,6 @@ function createLookup(values) {
     values: normalizedPairs.map(([, value]) => value)
   };
 }
-function buildOriginalLanguageValues(originalLanguageMap) {
-  const tags = Object.values(originalLanguageMap);
-  const baseCodes = tags.map((tag) => tag.split("-")[0]).filter(Boolean);
-  return [...baseCodes, ...tags];
-}
 function buildLocaleTags(languageCodeMap, localeCodeMap) {
   const values = [];
   for (const [languageName, locales] of Object.entries(localeCodeMap)) {
@@ -4620,9 +4617,7 @@ var CAPABILITY_DEFINITIONS = {
   translate_dub: {
     allowAutoOriginalLanguage: true,
     kind: "translate_dub",
-    originalLanguage: createLookup(
-      buildOriginalLanguageValues(TranslateOriginalLanguageMap)
-    ),
+    originalLanguage: createLookup(Object.values(TranslateOriginalLanguageMap)),
     targetLanguage: createLookup(TRANSLATE_TARGET_LANGUAGE_VALUES),
     targetLocale: createLookup(
       buildLocaleTags(TranslateLanguageCodeMap, TranslateLocaleCodeMap)
@@ -4631,9 +4626,7 @@ var CAPABILITY_DEFINITIONS = {
   translate_subtitles: {
     allowAutoOriginalLanguage: true,
     kind: "translate_subtitles",
-    originalLanguage: createLookup(
-      buildOriginalLanguageValues(TranslateOriginalLanguageMap)
-    ),
+    originalLanguage: createLookup(Object.values(TranslateOriginalLanguageMap)),
     targetLanguage: createLookup(TRANSLATE_TARGET_LANGUAGE_VALUES),
     targetLocale: createLookup(
       buildLocaleTags(TranslateLanguageCodeMap, TranslateLocaleCodeMap)
@@ -4643,7 +4636,7 @@ var CAPABILITY_DEFINITIONS = {
     allowAutoOriginalLanguage: false,
     kind: "visual_translate",
     originalLanguage: createLookup(
-      buildOriginalLanguageValues(TranslateFrameOriginalLanguageMap)
+      Object.values(TranslateFrameOriginalLanguageMap)
     ),
     targetLanguage: createLookup(TRANSLATE_TARGET_LANGUAGE_VALUES),
     targetLocale: createLookup(
@@ -5337,15 +5330,19 @@ function parseTimeToMs(timeStr) {
   return parseInt(h, 10) * 36e5 + parseInt(m, 10) * 6e4 + parseInt(sec, 10) * 1e3 + parseInt(ms, 10);
 }
 function validateSubtitleFileContent(content, maxEndTimeInSeconds) {
-  const regex = /(\d{2}:\d{2}:\d{2}[.,]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[.,]\d{3})/g;
+  const regex = /(?:^|\r?\n)\uFEFF?(?:(\d+)\r?\n)?[ \t]*(\d{2}:\d{2}:\d{2}[.,]\d{3})[ \t]*-->[ \t]*(\d{2}:\d{2}:\d{2}[.,]\d{3})/g;
   const matches = [...content.matchAll(regex)];
   if (matches.length === 0) {
     return { valid: false, error: "no timestamp" };
   }
-  const timestamps = matches.map((match) => ({
-    end: parseTimeToMs(match[2]),
-    start: parseTimeToMs(match[1])
-  }));
+  const timestamps = matches.map((match, index) => {
+    const [, subtitleIndex, start, end] = match;
+    return {
+      end: parseTimeToMs(end),
+      start: parseTimeToMs(start),
+      subtitleIndex: subtitleIndex ?? String(index + 1)
+    };
+  });
   timestamps.sort((left, right) => left.start - right.start);
   for (let index = 0; index < timestamps.length; index += 1) {
     const { end, start } = timestamps[index];
@@ -5353,7 +5350,14 @@ function validateSubtitleFileContent(content, maxEndTimeInSeconds) {
       return { valid: false, error: "timestamp invalid" };
     }
     if (index > 0 && start < timestamps[index - 1].end) {
-      return { valid: false, error: "timestamp overlap" };
+      return {
+        valid: false,
+        error: "timestamp overlap",
+        overlappingSubtitleIndexes: [
+          timestamps[index - 1].subtitleIndex,
+          timestamps[index].subtitleIndex
+        ]
+      };
     }
   }
   const maxEndInMs = maxEndTimeInSeconds * 1e3;

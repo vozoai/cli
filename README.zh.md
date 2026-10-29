@@ -312,7 +312,7 @@ vozo-cli project translate_dub create \
 ```bash
 vozo-cli project visual_translate create \
   --from-file ./demo.mp4 \
-  --original-language en \
+  --original-language en-US \
   --target-language zh \
   --font-file ./BrandSans.otf
 ```

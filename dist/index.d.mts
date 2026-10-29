@@ -1071,18 +1071,23 @@ declare const SUBTITLE_FILE_SIZE_LIMIT_BYTES: number;
 declare function validateSubtitleFileContent(content: string, maxEndTimeInSeconds: number): {
     valid: false;
     error: "no timestamp";
+    overlappingSubtitleIndexes?: undefined;
 } | {
     valid: false;
     error: "timestamp invalid";
+    overlappingSubtitleIndexes?: undefined;
 } | {
     valid: false;
     error: "timestamp overlap";
+    overlappingSubtitleIndexes: [string, string];
 } | {
     valid: false;
     error: "timestamp overflow";
+    overlappingSubtitleIndexes?: undefined;
 } | {
     valid: true;
     error?: undefined;
+    overlappingSubtitleIndexes?: undefined;
 };
 declare function assertSubtitleFileForTranslation(options: {
     subtitleFilePath: string;

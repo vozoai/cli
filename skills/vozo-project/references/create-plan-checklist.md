@@ -6,7 +6,7 @@ Use this file **every time** you present a create plan to the user. The plan is 
 
 **Presentation rules (important):**
 
-- **Lead with product meaning, not CLI flags.** Show semantic labels the user can read (e.g. “Original language”, “Target language”, “Voice model”). Put the CLI code in parentheses only when helpful — e.g. `English (en)`, not `--original-language: en`.
+- **Lead with product meaning, not CLI flags.** Show semantic labels the user can read (e.g. “Original language”, “Target language”, “Voice model”). Put the CLI code in parentheses only when helpful — e.g. `English (United States, en-US)`, not `--original-language: en-US`.
 - Do **not** present the plan as a bare list of `--flag` names. Users are confirming the job outcome, not the CLI syntax.
 - Write `none` / `default` / `auto` explicitly when a setting is omitted from the command but the CLI will apply a default.
 - Do **not** summarize with “other defaults” or “standard settings” — list each field.

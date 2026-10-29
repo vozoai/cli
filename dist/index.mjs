@@ -197,7 +197,7 @@ import {
   waitForAuthenticatedSession,
   warnCliUpgradeIfSuggested,
   writeStoredSession
-} from "./chunk-6QLXNZWG.mjs";
+} from "./chunk-JMBVCKWZ.mjs";
 export {
   BATCH_CREATE_MAX_FILES,
   BLOCK_PROCESSING_STATUSES,

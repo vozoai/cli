@@ -319,7 +319,7 @@ Default fonts often miss your brand look. Upload a local `.ttf` / `.otf` with `-
 ```bash
 vozo-cli project visual_translate create \
   --from-file ./demo.mp4 \
-  --original-language en \
+  --original-language en-US \
   --target-language zh \
   --font-file ./BrandSans.otf
 ```
