@@ -31,7 +31,7 @@ var import_node_stream = require("stream");
 var import_promises2 = require("stream/promises");
 
 // src/core/config.ts
-var CLI_VERSION = "1.0.4";
+var CLI_VERSION = "1.0.5";
 function formatCliVersionForApiHeader(version) {
   const withoutPrefix = version.trim().replace(/^v/i, "");
   const coreMatch = withoutPrefix.match(/^(\d+\.\d+\.\d+)/);
@@ -2256,8 +2256,12 @@ function parseLanguageInput(value, flag) {
   }
   return normalized;
 }
+var twoDecimalFormatter = new Intl.NumberFormat("en-US", {
+  useGrouping: false,
+  maximumFractionDigits: 2
+});
 function round2(value) {
-  return Number.parseFloat(value.toFixed(2));
+  return Number(twoDecimalFormatter.format(value));
 }
 function calcTotalPoints(points) {
   return points.map((point) => point.availablePoint ?? 0).filter((value) => value > 0).reduce((sum, value) => sum + value, 0);
@@ -2272,7 +2276,7 @@ function estimateConsumedPoints(options) {
     case "visual_translate":
       return round2(duration / 6);
     case "lipsync":
-      return 5 + Math.ceil(duration / 12);
+      return round2(5 + duration / 12);
     default:
       return 0;
   }

@@ -1,6 +1,6 @@
 {
   "name": "@vozoai/cli",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,7 +28,7 @@
     "ali-oss": "^6.23.0",
     "commander": "^13.1.0",
     "dayjs": "^1.11.13",
-    "mediainfo.js": "^0.3.7",
+    "mediainfo.js": "0.3.7",
     "mime-types": "^2.1.35"
   }
 }

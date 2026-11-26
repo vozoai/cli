@@ -28,7 +28,7 @@ Use this file **every time** you present a create plan to the user. The plan is 
 | Dashboard folder | `none` or `Name (folderId: …)` |
 | Project title | `auto from filename` / page title |
 | Auto-download when done? | `yes` / `no` (§3.2) |
-| Estimated points | **Required.** e.g. `~12.50 (estimate)` — use `references/limits.md` formulas × project count (and × languages if multi-language). Include `available: N` from `auth points` when known. If duration is unknown yet, say `pending — need media duration` and resolve before asking for create confirmation. |
+| Estimated points | **Required.** e.g. `~12.50 (estimate)` — sum the rounded per-project estimates from `references/limits.md` across all files and target languages. Include `available: N` from `auth points` when known. If duration is unknown yet, say `pending — need media duration` and resolve before asking for create confirmation. |
 | Points / plan note | extra warnings only (insufficient balance, first-time auto-clip, Studio batch gate) — or `none` |
 
 ---
@@ -130,6 +130,6 @@ Wait for explicit user confirmation before running `create`.
 | Translate & Dub | `duration / 20`; with burn-in **and** remove-original: `duration / 15` |
 | Translate Subtitles | `0`; with remove-original: `duration / 60` |
 | Visual Translate | `duration / 6` |
-| Lip Sync | `5 + ceil(duration / 12)` |
+| Lip Sync | `round2(5 + duration / 12)` |
 
-Batch / multi-language: multiply by file count and by target-language count. Full rules in `references/limits.md`.
+For a batch, round each project estimate to two decimals before summing across files and target languages. Full rules in `references/limits.md`.

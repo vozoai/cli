@@ -4,7 +4,7 @@ import {
   buildCliCommandErrorPayload,
   printJson,
   printStderr
-} from "./chunk-JMBVCKWZ.mjs";
+} from "./chunk-E2WHRHYD.mjs";
 
 // src/cli.ts
 async function main() {

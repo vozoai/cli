@@ -20,9 +20,9 @@ Fails **before** upload/API if violated:
 | `translate_dub`       | `duration / 20`; with `--enable-subtitles` + `--remove-original-subtitle`: `duration / 15` |
 | `translate_subtitles` | `0`; with `--remove-original-subtitle`: `duration / 60`                                    |
 | `visual_translate`    | `duration / 6`                                                                             |
-| `lipsync`             | `5 + ceil(duration / 12)`                                                                  |
+| `lipsync`             | `round2(5 + duration / 12)`                                                                  |
 
-`duration` is media length in seconds. Batch create multiplies by item count and target languages. **If total estimated points exceed available balance, the entire batch is rejected before any upload** (no partial batch, no per-file clip fallback).
+`duration` is media length in seconds. For Lip Sync, 30 seconds costs an estimated 7.5 points and 31 seconds costs 7.58. For batches, sum the individually rounded estimates for all projects. **If total estimated points exceed available balance, the entire batch is rejected before any upload** (no partial batch, no per-file clip fallback).
 
 For `translate_dub more-languages`, do not use a local formula. Run the resolved
 command with `--estimate-only` and use the backend-returned `point` value in the
